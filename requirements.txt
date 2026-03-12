@@ -1,0 +1,8 @@
+streamlit==1.41.1
+python-pptx==1.0.2
+PyMuPDF==1.25.3
+python-dotenv==1.0.1
+google-generativeai==0.8.6
+langchain-google-genai==4.2.1
+langchain-community>=0.2.0
+faiss-cpu>=1.7.4
