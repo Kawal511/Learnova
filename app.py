@@ -13,11 +13,13 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from parsers.ppt_parser import parse_ppt
-from parsers.pdf_parser import parse_pdf
+from parsers.pdf_parser import parse_pdf, parse_textbook_pdf
 from rag.chunker import chunk_parsed_data
 from ai.improver import improve_chunks
 from ai.quiz_gen import generate_quizzes
 from utils.scorer import score_all_slides
+from utils.ppt_builder import build_pptx
+from ai.image_describer import describe_images
 from logger import logger
 
 # Load environment variables
@@ -281,8 +283,13 @@ with st.sidebar:
         "1. **Upload** a PPT or PDF file\n"
         "2. **AI extracts** and chunks content\n"
         "3. **Gemini improves** each slide\n"
-        "4. **Quizzes & scores** are generated"
+        "4. **Quizzes & scores** are generated\n"
+        "5. **Export** beautifully formatted PPTX"
     )
+    st.divider()
+
+    st.header("⚙️ Parsing Mode")
+    st.session_state.parsing_mode = st.selectbox("Document Style", ["Auto", "PPT / Slides", "Textbook PDF"])
     st.divider()
 
     # Reset button
@@ -366,12 +373,35 @@ if st.session_state.parsed_data is None:
         tmp_path = tmp.name
 
     try:
+        parsed_obj = None
         if file_ext == ".pptx":
-            st.session_state.parsed_data = parse_ppt(tmp_path)
+            parsed_obj = parse_ppt(tmp_path)
         elif file_ext == ".pdf":
-            st.session_state.parsed_data = parse_pdf(tmp_path)
+            if st.session_state.get("parsing_mode") == "Textbook PDF":
+                parsed_obj = parse_textbook_pdf(tmp_path)
+            else:
+                parsed_obj = parse_pdf(tmp_path)
         else:
             st.error("Unsupported file type.")
+            
+        if parsed_obj:
+            # Convert to list of dicts for UI compatibility
+            parsed_dicts = []
+            for s in parsed_obj.slide_units:
+                d = {
+                    "id": s.id,
+                    "slide": s.id + 1,
+                    "page": s.id + 1,
+                    "title": s.title,
+                    "content": s.text.split('\n'),
+                    "text": s.text,
+                }
+                if s.image:
+                    d["image"] = s.image
+                parsed_dicts.append(d)
+                
+            st.session_state.parsed_data = parsed_dicts
+            
     except ValueError as ve:
         logger.error("Parsing error for %s: %s", file_name, ve, exc_info=True)
         st.error(f"⚠️ Parsing error: {ve}")
@@ -417,13 +447,59 @@ if parsed:
     if st.session_state.improved_results is None:
         if st.button("✨ Improve with AI, Generate Quizzes & Score"):
             t_start = time.time()
-            with st.spinner("🤖 Learnova is improving your slides..."):
-                try:
-                    chunks = chunk_parsed_data(parsed)
+            try:
+                chunks = chunk_parsed_data(parsed)
+                
+                # Intercept Pipeline to Describe Images!
+                images_to_describe = []
+                seen_image_keys = set()
+                for i, chunk_data in enumerate(chunks):
+                    if "image" in chunk_data and chunk_data["image"]:
+                        img_key = len(chunk_data["image"]["bytes"])
+                        if img_key not in seen_image_keys:
+                            seen_image_keys.add(img_key)
+                            images_to_describe.append({
+                                "index": i,
+                                "bytes": chunk_data["image"]["bytes"],
+                                "ext": chunk_data["image"].get("ext", "png")
+                            })
+                
+                if images_to_describe:
+                    with st.spinner(f"🔍 Analyzing {len(images_to_describe)} unique images with Gemini Vision..."):
+                        described_data = describe_images(images_to_describe)
+                        # Build a lookup: image bytes size -> description
+                        desc_lookup = {}
+                        for d in described_data:
+                            desc_lookup[id(d["bytes"])] = d["description"]
+                        # Also build lookup by bytes content (for cross-reference)
+                        desc_by_content = {}
+                        for d in described_data:
+                            desc_by_content[d["bytes"]] = d["description"]
+
+                        # Write descriptions into chunks (for the AI improver context)
+                        for chunk_data in chunks:
+                            if "image" in chunk_data and chunk_data["image"]:
+                                img_bytes = chunk_data["image"].get("bytes")
+                                desc = desc_by_content.get(img_bytes)
+                                if desc:
+                                    chunk_data["image"]["description"] = desc
+                                    chunk_data["text"] = chunk_data["text"] + "\n\n[Visual Image Context: " + desc + "]"
+
+                        # CRITICAL: Also write descriptions back to the parsed list
+                        # so the frontend's original["image"]["description"] check works
+                        for item in parsed:
+                            if "image" in item and item["image"]:
+                                img_bytes = item["image"].get("bytes")
+                                desc = desc_by_content.get(img_bytes)
+                                if desc:
+                                    item["image"]["description"] = desc
+
+                st.info(f"📄 Processing {len(chunks)} page(s)/chunks... This may take a moment for large documents.")
+                with st.spinner("🤖 Learnova is improving your slides..."):
                     st.session_state.improved_results = improve_chunks(chunks)
-                except Exception as e:
-                    logger.error("AI improvement failed: %s", e, exc_info=True)
-                    st.error(f"⚠️ AI improvement failed: {e}")
+            except Exception as e:
+                logger.error("AI improvement failed: %s", e, exc_info=True)
+                st.error(f"⚠️ AI improvement failed: {e}")
 
             if st.session_state.improved_results:
                 with st.spinner("🧠 Generating quizzes..."):
@@ -449,6 +525,26 @@ if parsed:
 
 # ── Tabbed Results ───────────────────────────────────────────────────────
 if st.session_state.improved_results:
+    st.markdown("## 📥 Download Your Presentation")
+    
+    with st.spinner("📦 Generating .pptx file..."):
+        # Make sure that image dictionary persists for ppt_builder
+        for data in st.session_state.improved_results:
+            orig = data["original"]
+            img = orig.get("image")
+            if img:
+                data["original"]["image"] = img
+
+        pptx_bytes = build_pptx(st.session_state.improved_results, topic_title=file_name)
+    
+    st.download_button(
+        label="Download Midnight Executive .pptx",
+        data=pptx_bytes,
+        file_name=f"Learnova_{file_name}.pptx",
+        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    )
+    st.divider()
+
     tab_slides, tab_quizzes, tab_scores = st.tabs(
         ["📄 Improved Slides", "🧠 Quizzes", "📊 Engagement Score"]
     )
@@ -482,6 +578,13 @@ if st.session_state.improved_results:
                     f"border-radius:8px'>{original['text']}</div>",
                     unsafe_allow_html=True,
                 )
+                # Show image description if parsed!
+                if "image" in original and original["image"] is not None and "description" in original["image"]:
+                    st.markdown(
+                        f"<div style='background:#e0f7fa;color:#0056b3;padding:12px;margin-top:8px;"
+                        f"border-radius:8px;'><b>🖼️ Image Description:</b><br>{original['image']['description']}</div>",
+                        unsafe_allow_html=True,
+                    )
 
             with col_improved:
                 st.markdown(

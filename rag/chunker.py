@@ -39,15 +39,20 @@ def chunk_parsed_data(parsed_data: list[dict]) -> list[dict]:
 
         # Split into word-bounded chunks of max 120 words
         words = full_text.split()
-        for i in range(0, len(words), MAX_CHUNK_WORDS):
+        for i in range(0, max(1, len(words)), MAX_CHUNK_WORDS):
             chunk_id += 1
-            segment = " ".join(words[i : i + MAX_CHUNK_WORDS])
-            chunks.append({
+            segment = " ".join(words[i : i + MAX_CHUNK_WORDS]) if words else ""
+            
+            chunk_obj = {
                 "id": chunk_id,
                 "title": title,
                 "text": segment,
                 "source": source,
-            })
+            }
+            if "image" in item:
+                chunk_obj["image"] = item["image"]
+                
+            chunks.append(chunk_obj)
 
     logger.info("Chunked %d items into %d chunks (max %d words each)",
                 len(parsed_data), len(chunks), MAX_CHUNK_WORDS)

@@ -1,6 +1,6 @@
 """
 Quiz Generator Module for Learnova
-Uses Gemini to create MCQ quizzes from improved slide content.
+Uses Groq to create MCQ quizzes from improved slide content.
 """
 
 import json
@@ -9,37 +9,28 @@ import re
 import time
 
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
+from groq import Groq
 
 from logger import logger
 
 load_dotenv()
 
-DELAY_BETWEEN_CALLS = 0.5  # seconds — avoid Gemini rate limits
+DELAY_BETWEEN_CALLS = 0.3  # seconds
 
-QUIZ_PROMPT = (
-    "You are an educational quiz designer.\n"
-    "Based on the slide content provided, generate 1 multiple choice question.\n"
-    "Return ONLY valid JSON:\n"
-    "{{\n"
-    '  "question": "...",\n'
-    '  "options": ["A) ...", "B) ...", "C) ...", "D) ..."],\n'
-    '  "correct": "A",\n'
-    '  "explanation": "..."\n'
-    "}}\n\n"
-    "Slide content:\n{content}"
+SYSTEM_PROMPT = (
+    "You are an educational quiz designer. "
+    "Generate 1 multiple choice question based on the content provided. "
+    "Return ONLY valid JSON: "
+    '{"question": "...", "options": ["A) ...", "B) ...", "C) ...", "D) ..."], "correct": "A", "explanation": "..."}'
 )
 
 
-def _get_llm() -> ChatGoogleGenerativeAI:
-    """Return a configured Gemini chat model."""
-    api_key = os.getenv("GEMINI_API_KEY")
+def _get_client() -> Groq:
+    """Return a configured Groq client."""
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise ValueError("GEMINI_API_KEY not found in environment variables.")
-    return ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash",
-        google_api_key=api_key,
-    )
+        raise ValueError("GROQ_API_KEY not found in environment variables.")
+    return Groq(api_key=api_key)
 
 
 def _parse_llm_json(raw_response: str) -> dict | None:
@@ -64,7 +55,7 @@ def generate_quizzes(improved_results: list[dict]) -> list[dict]:
     Returns:
         List of quiz dicts with keys: question, options, correct, explanation, source_slides.
     """
-    llm = _get_llm()
+    client = _get_client()
     quizzes = []
 
     # Group into batches of 3
@@ -83,11 +74,19 @@ def generate_quizzes(improved_results: list[dict]) -> list[dict]:
             source_slides.append(entry["original"].get("source", "?"))
 
         combined_content = "\n\n".join(combined_parts)
-        prompt = QUIZ_PROMPT.format(content=combined_content)
 
         try:
-            response = llm.invoke(prompt)
-            parsed = _parse_llm_json(response.content)
+            completion = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": combined_content},
+                ],
+                temperature=0.7,
+                max_tokens=400,
+            )
+            raw_content = (completion.choices[0].message.content or "").strip()
+            parsed = _parse_llm_json(raw_content)
 
             if parsed and "question" in parsed and "options" in parsed:
                 parsed["source_slides"] = source_slides
@@ -98,7 +97,7 @@ def generate_quizzes(improved_results: list[dict]) -> list[dict]:
                 )
         except Exception as e:
             logger.error(
-                "Gemini quiz call failed for slides %s: %s",
+                "Groq quiz call failed for slides %s: %s",
                 source_slides, e, exc_info=True,
             )
 
@@ -106,6 +105,6 @@ def generate_quizzes(improved_results: list[dict]) -> list[dict]:
         if batch_start + 3 < len(improved_results):
             time.sleep(DELAY_BETWEEN_CALLS)
 
-    logger.info("Generated %d quiz(es) from %d improved slides",
+    logger.info("Generated %d quiz(es) from %d improved slides via Groq",
                 len(quizzes), len(improved_results))
     return quizzes
