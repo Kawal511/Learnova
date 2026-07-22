@@ -12,10 +12,10 @@ from logger import logger
 load_dotenv()
 
 IMAGE_PROMPT = (
-    "You are an educational content assistant.\n"
-    "Describe this image in 2-3 sentences focusing on\n"
-    "what a student should learn from it.\n"
-    "Be concise and educational."
+    "You are an expert OCR and Educational Visual Content Transcriber.\n"
+    "1. EXTRACT AND TRANSCRIBE ALL TEXT, LABELS, CAPTIONS, HEADINGS, NUMBERS, AND TABLES VISIBLE IN THIS IMAGE WORD-FOR-WORD.\n"
+    "2. IF THIS IMAGE IS A DIAGRAM, FLOWCHART, ARCHITECTURE, OR INFOGRAPHIC, DESCRIBE EVERY NODE, STEP, ARROW, RELATIONSHIP, AND CONNECTED CONCEPT IN DETAIL.\n"
+    "3. RETURN A STRUCTURED TEXT TRANSCRIPTION THAT CONTAINS ALL KNOWLEDGE AND TEXT FROM THE IMAGE SO IT CAN BE USED FOR EDUCATIONAL SLIDES."
 )
 DELAY_BETWEEN_CALLS = 0.5
 
@@ -77,7 +77,7 @@ def describe_images(images: list[dict]) -> list[dict]:
             for attempt in range(max_retries):
                 try:
                     response = client.models.generate_content(
-                        model="gemini-1.5-flash",
+                        model="gemini-2.5-flash",
                         contents=[
                             IMAGE_PROMPT,
                             pil_img,
