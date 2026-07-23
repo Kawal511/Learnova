@@ -164,10 +164,12 @@ def _extract_page_images(page, doc, min_size: int = 120) -> List[dict]:
             w = base_image.get("width", 0)
             h = base_image.get("height", 0)
             if w >= min_size and h >= min_size:
-                with Image.open(io.BytesIO(base_image["image"])) as pil_img:
+                raw_bytes = bytes(base_image.get("image") or b"")
+                with Image.open(io.BytesIO(raw_bytes)) as pil_img:
+                    pil_img.load()
                     out = io.BytesIO()
                     pil_img.convert("RGB").save(out, format="PNG")
-                    images.append({"bytes": out.getvalue(), "ext": "png"})
+                    images.append({"bytes": bytes(out.getvalue()), "ext": "png"})
         except Exception:
             pass
     return images
@@ -177,7 +179,9 @@ def _render_page_as_image(page, dpi: int = 150) -> Optional[dict]:
     """Render a whole PDF page as PNG for Gemini Vision OCR fallback."""
     try:
         pix = page.get_pixmap(dpi=dpi)
-        return {"bytes": pix.tobytes("png"), "ext": "png"}
+        png_bytes = bytes(pix.tobytes("png"))
+        pix = None
+        return {"bytes": png_bytes, "ext": "png"}
     except Exception:
         return None
 
@@ -333,15 +337,21 @@ class PDFParser(BaseDocumentParser):
                 if not image_bytes:
                     continue
 
-                sha256 = hashlib.sha256(image_bytes).hexdigest()
+                raw_bytes = bytes(image_bytes)
+                sha256 = hashlib.sha256(raw_bytes).hexdigest()
                 w = base_image.get("width", 0)
                 h = base_image.get("height", 0)
 
-                with Image.open(io.BytesIO(image_bytes)) as pil_img:
-                    out = io.BytesIO()
-                    pil_img.convert("RGB").save(out, format="PNG")
-                    png_bytes = out.getvalue()
-                    w, h = pil_img.size
+                png_bytes = raw_bytes
+                try:
+                    with Image.open(io.BytesIO(raw_bytes)) as pil_img:
+                        pil_img.load()
+                        out = io.BytesIO()
+                        pil_img.convert("RGB").save(out, format="PNG")
+                        png_bytes = bytes(out.getvalue())
+                        w, h = pil_img.size
+                except Exception:
+                    pass
 
                 if w >= 100 and h >= 100:
                     asset_type = VisualAssetType.ICON if (w < 120 and h < 120) else VisualAssetType.PICTURE

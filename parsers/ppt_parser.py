@@ -93,7 +93,11 @@ def _slide_as_image(file_path: str, slide_index: int) -> Optional[dict]:
         if slide_index < len(doc):
             page = doc[slide_index]
             pix = page.get_pixmap(dpi=150)
-            return {"bytes": pix.tobytes("png"), "ext": "png"}
+            png_bytes = bytes(pix.tobytes("png"))
+            pix = None
+            doc.close()
+            return {"bytes": png_bytes, "ext": "png"}
+        doc.close()
     except Exception:
         pass
     return None
@@ -262,16 +266,17 @@ class PPTXParser(BaseDocumentParser):
         # 2. Embedded Pictures
         try:
             if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                blob = shape.image.blob
+                blob = bytes(shape.image.blob)
                 sha256 = hashlib.sha256(blob).hexdigest()
                 width_px, height_px = 0, 0
                 png_bytes = blob
                 try:
                     with Image.open(io.BytesIO(blob)) as pil_img:
+                        pil_img.load()
                         width_px, height_px = pil_img.size
                         out = io.BytesIO()
                         pil_img.convert("RGB").save(out, format="PNG")
-                        png_bytes = out.getvalue()
+                        png_bytes = bytes(out.getvalue())
                 except Exception:
                     pass
 

@@ -11,6 +11,7 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["PYTHONFAULTHANDLER"] = "1"
 
 import hashlib
 import tempfile
@@ -278,7 +279,11 @@ if st.session_state.parsed_data is None:
         logger.error("Parsing error: %s", e, exc_info=True)
         st.error(f"⚠️ Parsing error: {e}")
     finally:
-        os.unlink(tmp_path)
+        if os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 parsed = st.session_state.parsed_data
 
