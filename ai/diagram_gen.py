@@ -27,14 +27,14 @@ def _get_client() -> Groq:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise ValueError("GROQ_API_KEY not found in environment variables.")
-    return Groq(api_key=api_key)
+    return Groq(api_key=api_key, timeout=10.0)
 
 def generate_mermaid_diagram(text: str, title: str = "") -> dict:
     """
     Generate Mermaid.js code for process/workflow text.
     """
-    client = _get_client()
     try:
+        client = _get_client()
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
@@ -43,8 +43,12 @@ def generate_mermaid_diagram(text: str, title: str = "") -> dict:
             ],
             temperature=0.3,
             max_tokens=600,
+            timeout=10.0,
         )
         raw_content = (completion.choices[0].message.content or "").strip()
+        match = re.search(r"\{.*\}", raw_content, re.DOTALL)
+        if match:
+            raw_content = match.group(0)
         cleaned = re.sub(r"^```(?:json)?\s*", "", raw_content)
         cleaned = re.sub(r"\s*```$", "", cleaned)
         data = json.loads(cleaned)

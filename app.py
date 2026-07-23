@@ -3,8 +3,16 @@ Learnova – AI Presentation Engine
 Streamlit UI with AI-improved slides, dynamic visual layouts (Flowcharts, Tables, Metrics), quizzes, and web exports.
 """
 
-import hashlib
 import os
+os.environ["PYDANTIC_DISABLE_PLUGINS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+import hashlib
 import tempfile
 import time
 
@@ -22,6 +30,7 @@ from ai.quiz_gen import generate_quizzes, interleave_quizzes_into_slides
 from utils.scorer import score_all_slides
 from utils.ppt_builder import build_pptx
 from utils.web_deck_builder import build_web_deck
+from utils.subprocess_builder import build_pptx_safe, build_html_safe
 from utils.theme_engine import THEMES, get_theme, auto_detect_theme
 from ai.image_describer import describe_images
 from logger import logger
@@ -130,6 +139,8 @@ _defaults = {
     "quizzes": None,
     "scores": None,
     "processing_time": None,
+    "pptx_bytes": None,
+    "html_bytes": None,
 }
 for key, val in _defaults.items():
     if key not in st.session_state:
@@ -315,6 +326,8 @@ if parsed:
     st.divider()
 
     # ── AI Processing ────────────────────────────────────────────────────────
+    active_theme = st.session_state.get("selected_theme_id", "auto")
+    file_name = st.session_state.file_name or "presentation"
     if st.session_state.improved_results is None:
         if st.button("🚀 Process Visual Layouts, Flowcharts & Interleaved Quizzes"):
             t_start = time.time()
@@ -337,15 +350,18 @@ if parsed:
                             })
 
                 if images_to_describe:
-                    with st.spinner("🔍 Running Gemini 2.5 Vision OCR & Diagram Extraction..."):
-                        described = describe_images(images_to_describe)
-                        desc_map = {d["bytes"]: d["description"] for d in described}
-                        for chunk_data in chunks:
-                            if "image" in chunk_data and chunk_data["image"]:
-                                b = chunk_data["image"].get("bytes")
-                                if b in desc_map:
-                                    chunk_data["image"]["description"] = desc_map[b]
-                                    chunk_data["text"] += f"\n\n[Extracted OCR & Image Diagram Content:\n{desc_map[b]}]"
+                    with st.spinner("🔍 Running Gemini Vision OCR & Diagram Extraction..."):
+                        try:
+                            described = describe_images(images_to_describe)
+                            desc_map = {d["bytes"]: d["description"] for d in described if "bytes" in d and "description" in d}
+                            for chunk_data in chunks:
+                                if "image" in chunk_data and chunk_data["image"]:
+                                    b = chunk_data["image"].get("bytes")
+                                    if b in desc_map:
+                                        chunk_data["image"]["description"] = desc_map[b]
+                                        chunk_data["text"] += f"\n\n[Extracted OCR & Image Diagram Content:\n{desc_map[b]}]"
+                        except Exception as e:
+                            logger.warning("Gemini Vision OCR description skipped: %s", e)
 
                 # ── RAG Indexing Step ─────────────────────────────────────────
                 with st.spinner("⚡ Building FAISS Vector Index & RAG Context Store..."):
@@ -371,8 +387,36 @@ if parsed:
                     scores = score_all_slides(st.session_state.final_deck)
                     st.session_state.scores = scores
 
+                # Force garbage collection to clean up Groq/httpx C-extension objects
+                # BEFORE spawning subprocesses — prevents macOS SIGSEGV (exit 139)
+                import gc
+                gc.collect()
+
+                with st.spinner("📦 Building Animated PPTX Deck..."):
+                    try:
+                        st.session_state.pptx_bytes = build_pptx_safe(
+                            st.session_state.final_deck,
+                            topic_title=file_name,
+                            theme_id=active_theme
+                        )
+                    except Exception as e:
+                        logger.error("PPTX build failed: %s", e)
+                        st.session_state.pptx_bytes = None
+
+                with st.spinner("🌐 Building Interactive HTML Web Deck..."):
+                    try:
+                        st.session_state.html_bytes = build_html_safe(
+                            st.session_state.final_deck,
+                            topic_title=file_name,
+                            theme_id=active_theme
+                        )
+                    except Exception as e:
+                        logger.error("HTML build failed: %s", e)
+                        st.session_state.html_bytes = None
+
                 st.session_state.processing_time = round(time.time() - t_start, 1)
-                st.rerun()
+                st.success(f"✅ Done! Processed in {st.session_state.processing_time}s — scroll down for your deck.")
+                # NOTE: No st.rerun() — results section renders immediately below from session_state
 
             except Exception as e:
                 logger.error("Processing failed: %s", e, exc_info=True)
@@ -381,31 +425,32 @@ if parsed:
 # ── Results & Exporters ──────────────────────────────────────────────────────
 if st.session_state.final_deck:
     deck = st.session_state.final_deck
+    _dl_name = st.session_state.file_name or "presentation"
     st.markdown("## 📥 Download Your Presentation")
 
     col_dl1, col_dl2 = st.columns(2)
 
-    active_theme = st.session_state.get("selected_theme_id", "auto")
-
     with col_dl1:
-        with st.spinner("📦 Building Animated PPTX Deck..."):
-            pptx_bytes = build_pptx(deck, topic_title=file_name, theme_id=active_theme)
-        st.download_button(
-            label="📥 Download Animated PPTX (.pptx)",
-            data=pptx_bytes,
-            file_name=f"Learnova_Visual_{file_name}.pptx",
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-        )
+        if st.session_state.pptx_bytes:
+            st.download_button(
+                label="📥 Download Animated PPTX (.pptx)",
+                data=st.session_state.pptx_bytes,
+                file_name=f"Learnova_Visual_{_dl_name}.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            )
+        else:
+            st.warning("⚠️ PPTX build failed – see logs for details.")
 
     with col_dl2:
-        with st.spinner("🌐 Building Interactive HTML Web Deck..."):
-            html_str = build_web_deck(deck, topic_title=file_name, theme_id=active_theme)
-        st.download_button(
-            label="🌐 Download Interactive Web Deck (.html)",
-            data=html_str.encode("utf-8"),
-            file_name=f"Learnova_Interactive_{file_name}.html",
-            mime="text/html"
-        )
+        if st.session_state.html_bytes:
+            st.download_button(
+                label="🌐 Download Interactive Web Deck (.html)",
+                data=st.session_state.html_bytes,
+                file_name=f"Learnova_Interactive_{_dl_name}.html",
+                mime="text/html"
+            )
+        else:
+            st.warning("⚠️ HTML build failed – see logs for details.")
 
     st.divider()
 

@@ -53,11 +53,13 @@ Return ONLY valid JSON matching this exact schema:
 }
 """
 
+_groq_rate_limited = False  # module-level flag; skip API once quota is hit
+
 def _get_client() -> Groq:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise ValueError("GROQ_API_KEY not found in environment variables.")
-    return Groq(api_key=api_key)
+    return Groq(api_key=api_key, timeout=8.0)
 
 def _heuristic_layout_type(text: str) -> str:
     lower = text.lower()
@@ -80,34 +82,43 @@ def _heuristic_layout_type(text: str) -> str:
 
 def classify_and_structure_chunk(text: str, current_title: str = "") -> dict:
     """
-    Classifies content chunk into a layout type and constructs structured slide payload.
-    Includes automatic rate-limit backoff retries.
+    Classifies content chunk into a layout type.
+    Falls back instantly to local heuristic when Groq TPM quota is exceeded.
     """
-    client = _get_client()
+    global _groq_rate_limited
     try:
-        completion = None
-        for attempt in range(3):
-            try:
-                completion = client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": f"Title: {current_title}\nText:\n{text}"},
-                    ],
-                    temperature=0.3,
-                    max_tokens=900,
-                )
-                break
-            except Exception as e:
-                if "429" in str(e) or "rate_limit" in str(e).lower():
-                    time.sleep(1.5 * (attempt + 1))
-                else:
-                    raise e
+        # If we already hit the rate limit earlier, skip API call entirely
+        if _groq_rate_limited:
+            raise ValueError("Groq TPM quota previously exhausted; using local fallback")
 
-        if not completion:
-            raise ValueError("Failed Groq completion after retries")
+        client = _get_client()
+        completion = None
+        try:
+            completion = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Title: {current_title}\nText:\n{text[:1200]}"},
+                ],
+                temperature=0.3,
+                max_tokens=300,
+                timeout=8.0,
+            )
+        except Exception as e:
+            err_str = str(e).lower()
+            if "429" in err_str or "rate_limit" in err_str or "quota" in err_str or "tokens" in err_str:
+                _groq_rate_limited = True  # Skip all future API calls in this run
+                logger.warning("Groq TPM quota hit; switching to local heuristic for all remaining chunks")
+                raise ValueError("rate_limit")  # Triggers heuristic fallback below
+            raise e
+
+        if not completion or not completion.choices:
+            raise ValueError("Failed Groq completion")
 
         raw_content = (completion.choices[0].message.content or "").strip()
+        match = re.search(r"\{.*\}", raw_content, re.DOTALL)
+        if match:
+            raw_content = match.group(0)
         cleaned = re.sub(r"^```(?:json)?\s*", "", raw_content)
         cleaned = re.sub(r"\s*```$", "", cleaned)
         data = json.loads(cleaned)
@@ -153,8 +164,8 @@ def classify_and_structure_chunk(text: str, current_title: str = "") -> dict:
             "bullets": [s.strip() for s in text.split(".") if s.strip()][:3],
         }
         if h_layout == "FLOWCHART":
-            diag = generate_mermaid_diagram(text, current_title)
-            fallback["mermaid_code"] = diag["mermaid_code"]
+            safe_t = re.sub(r"[^\w\s]", "", (current_title or "Process")[:30]) or "Start"
+            fallback["mermaid_code"] = f"graph TD\n  A[{safe_t}] --> B[Execute Steps] --> C[Key Outcome]"
         elif h_layout == "TABLE":
             fallback["table_headers"] = ["Item", "Description"]
             fallback["table_rows"] = [["Key Concept", text[:80]]]

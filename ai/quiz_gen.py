@@ -26,7 +26,7 @@ def _get_client() -> Groq:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise ValueError("GROQ_API_KEY not found in environment variables.")
-    return Groq(api_key=api_key)
+    return Groq(api_key=api_key, timeout=10.0)
 
 def _parse_llm_json(raw_response: str) -> dict | None:
     text = raw_response.strip()
@@ -41,7 +41,11 @@ def generate_quizzes(improved_results: list[dict]) -> list[dict]:
     """
     Generate MCQs for improved slides.
     """
-    client = _get_client()
+    try:
+        client = _get_client()
+    except Exception as e:
+        logger.warning("Could not initialize Groq client for quizzes: %s", e)
+        return []
     quizzes = []
 
     for batch_start in range(0, len(improved_results), 3):
@@ -64,10 +68,11 @@ def generate_quizzes(improved_results: list[dict]) -> list[dict]:
                 model="llama-3.1-8b-instant",
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": combined_content},
+                    {"role": "user", "content": f"Content:\n{combined_content}"},
                 ],
-                temperature=0.7,
+                temperature=0.3,
                 max_tokens=400,
+                timeout=10.0,
             )
             raw_content = (completion.choices[0].message.content or "").strip()
             parsed = _parse_llm_json(raw_content)

@@ -8,7 +8,7 @@ from ai.layout_router import classify_and_structure_chunk
 from logger import logger
 
 MAX_CHUNKS = 60
-DELAY_BETWEEN_CALLS = 0.3
+DELAY_BETWEEN_CALLS = 0.5
 
 def improve_chunks(chunks: list[dict]) -> list[dict]:
     """

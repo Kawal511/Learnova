@@ -2,6 +2,8 @@
 
 import base64
 import os
+os.environ["PYDANTIC_DISABLE_PLUGINS"] = "1"
+
 import time
 
 from google import genai
@@ -47,20 +49,26 @@ def describe_images(images: list[dict]) -> list[dict]:
         logger.warning("GEMINI_API_KEY missing; skipping image descriptions")
         return []
 
-    client = genai.Client(api_key=api_key)
+    try:
+        client = genai.Client(api_key=api_key)
+    except Exception as e:
+        logger.warning("Could not initialize Gemini Client: %s", e)
+        return []
 
     described_images = []
     total = len(images or [])
+    quota_exceeded = False
 
     for idx, image in enumerate(images or []):
+        if quota_exceeded:
+            break
+
         try:
             image_bytes = image.get("bytes")
             if not image_bytes and image.get("base64"):
                 image_bytes = base64.b64decode(image.get("base64"))
             if not image_bytes:
                 continue
-
-            mime_type = _mime_from_ext(image.get("ext", "png"))
 
             import io
             from PIL import Image
@@ -70,29 +78,43 @@ def describe_images(images: list[dict]) -> list[dict]:
                 logger.warning(f"Could not open image with PIL: {e}")
                 continue
 
-            # Add robust retry logic for Google's 503 errors
-            max_retries = 3
+            max_retries = 2
             response = None
-            last_err = None
-            for attempt in range(max_retries):
-                try:
-                    response = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=[
-                            IMAGE_PROMPT,
-                            pil_img,
-                        ]
-                    )
+
+            # Models to try in priority order
+            models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
+
+            for model_name in models_to_try:
+                if response:
                     break
-                except Exception as e:
-                    last_err = e
-                    if "503" in str(e) or "429" in str(e):
-                        time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s...
-                    else:
-                        break
-            
+                for attempt in range(max_retries):
+                    try:
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=[
+                                IMAGE_PROMPT,
+                                pil_img,
+                            ]
+                        )
+                        if response and getattr(response, "text", None):
+                            break
+                    except Exception as e:
+                        err_str = str(e)
+                        if "RESOURCE_EXHAUSTED" in err_str or "Quota exceeded" in err_str:
+                            logger.warning(
+                                "Gemini Vision API quota limit reached on model %s: %s", model_name, err_str
+                            )
+                            if model_name == models_to_try[-1]:
+                                quota_exceeded = True
+                            break  # Try next model or stop
+                        elif "503" in err_str or "429" in err_str:
+                            time.sleep(1.5 * (attempt + 1))
+                        else:
+                            break  # non-retryable error for this model
+
             if not response:
-                raise last_err or Exception("Failed to generate content")
+                logger.warning("Could not describe image %s; skipping", image.get("index", idx))
+                continue
 
             description = (getattr(response, "text", "") or "").strip()
             if description:
@@ -102,9 +124,9 @@ def describe_images(images: list[dict]) -> list[dict]:
                     "bytes": image_bytes,
                 })
         except Exception as e:
-            logger.error("Image description failed for image %s: %s", image.get("index", idx), e, exc_info=True)
+            logger.warning("Image description skipped for image %s: %s", image.get("index", idx), e)
 
-        if idx < total - 1:
+        if idx < total - 1 and not quota_exceeded:
             time.sleep(DELAY_BETWEEN_CALLS)
 
     return described_images
