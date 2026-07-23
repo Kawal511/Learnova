@@ -28,9 +28,9 @@ _RE_DECORATIVE = re.compile(
     r"""
     ^\s*
     (?:
-        slide\s+\d+                            | # "Slide 1"
+        slide\s+\d+(?:\s*/\s*\d+)?             | # "Slide 1" or "Slide 1 / 10"
+        page\s+\d+(?:\s*/\s*\d+)?              | # "Page 2" or "Page 1 / 10"
         \d+\s*/\s*\d+                          | # "1 / 10" or "1/10"
-        page\s+\d+                             | # "Page 2"
         copyright\s+.*                         | # "Copyright 2026..."
         all\s+rights\s+reserved                | # "All rights reserved"
         confidential                           | # "Confidential"
@@ -111,8 +111,27 @@ def prioritize_text_blocks(
             )
             continue
 
-        # Rule 2: Decorative text (slide numbers, copyrights, standalone numbers)
-        if _RE_DECORATIVE.match(raw_text) or (word_count == 1 and raw_text.isdigit()):
+        # Rule 2: Decorative text (slide numbers, copyrights, standalone numbers, multi-part footers)
+        def _is_decorative(text: str) -> bool:
+            if not text:
+                return False
+            if text.isdigit():
+                return True
+            if _RE_DECORATIVE.match(text):
+                return True
+            # Multi-part pipe or dash separated footers (e.g. "Page 1 / 10 | Confidential")
+            parts = [p.strip() for p in re.split(r"[|–—]", text) if p.strip()]
+            if len(parts) >= 2:
+                if all(
+                    _RE_DECORATIVE.match(p)
+                    or p.isdigit()
+                    or p.lower() in ("confidential", "draft", "all rights reserved", "internal use only")
+                    for p in parts
+                ):
+                    return True
+            return False
+
+        if _is_decorative(raw_text):
             prioritized_list.append(
                 PrioritizedTextBlock(
                     block_id=tb.id,
