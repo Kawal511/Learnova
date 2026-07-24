@@ -1,64 +1,212 @@
-# 🎓 Learnova – AI Presentation Engine
+# 🎓 Learnova — AI Presentation Transformation Engine
 
-Learnova turns static PPT/PDF content into teaching-ready slides with AI-driven improvements, quizzes, engagement analytics, and downloadable professional PPT output.
-
-The app uses a Streamlit frontend with modular parsers, RAG preprocessing, AI generation modules, scoring utilities, and an export pipeline.
+> **Transforms boring, text-heavy PPTs/PDFs into modern, visually engaging, presentation-ready decks.**
+> Uses AI-generated layouts, flowcharts, timelines, comparison tables, KPI cards, SmartArt, infographics, and professional visual structures — fully programmatic with optional Groq/Gemini AI integration.
 
 ---
 
-## ✅ Current AI Stack (Updated)
+## 🗺️ Production Sprint Status
 
-- Groq (`llama-3.1-8b-instant`) is used for:
-  - Slide improvement
-  - Quiz generation
-- Gemini is used for:
-  - Embeddings (RAG support)
-  - PDF image description (Vision)
-
-No OpenAI components are used in the active pipeline.
+| Day | Sprint | Status |
+|-----|--------|--------|
+| Day 1–2 | **Unified Extraction Layer** — PPTX + PDF parsers, 8-type schema, SmartArt/chart/equation/image extraction | ✅ Complete |
+| Day 3 | **RAG Preprocessing & AI Baseline** — Groq slide improvement, quiz generation, Gemini embeddings | ✅ Complete |
+| Day 4 | **Intelligent Content Understanding Engine** — 20-responsibility concept extractor, content classifier, text prioritizer, visual opportunity detector, complexity scorer | ✅ Complete |
+| Day 5 | **Content Transformation & Visual Planning Engine** — Text action planner, 15 visual specification generators, compression metrics, `TransformationPlan` schema | ✅ Complete |
+| Day 6 | **Visual Rendering Engine** — Layout selection, shape/chart/flowchart rendering | 🔜 Next |
 
 ---
 
 ## 🚀 What Learnova Does
 
-1. Upload a `.pptx` or `.pdf` file.
-2. Parse slide/page text content.
-3. Extract images from PDFs (with size filtering).
-4. Chunk content for AI processing.
-5. Improve slide content with Groq.
-6. Generate quizzes with Groq.
-7. Score engagement quality per slide.
-8. Build and download a redesigned `.pptx` deck.
+1. **Upload** a `.pptx` or `.pdf` file.
+2. **Parse** all slide content — text blocks, tables, charts, SmartArt diagrams, equations, and embedded images via the Unified Extraction Layer.
+3. **Understand** every slide using the Intelligent Content Understanding Engine — extract 20 types of structured knowledge (steps, definitions, statistics, comparisons, timelines, relationships, and more).
+4. **Plan Transformations** — assign text actions (`KEEP`, `SUMMARIZE`, `REMOVE`, `MOVE_TO_VISUAL`, `MOVE_TO_NOTES`) and generate structured visual specifications for each slide.
+5. **Improve** slide content with Groq AI.
+6. **Generate quizzes** with Groq AI.
+7. **Score** engagement quality per slide.
+8. **Export** a redesigned `.pptx` deck (Day 6+).
 
 ---
 
-## 🆕 Recent Implementations
+## ✅ Current AI Stack
 
-### 1) Groq Migration for Text Tasks
-- `ai/improver.py` switched from Gemini LangChain calls to direct Groq SDK calls.
-- `ai/quiz_gen.py` switched from Gemini LangChain calls to direct Groq SDK calls.
-- Added `GROQ_API_KEY` support via `.env`.
+| Task | Model / Service |
+|------|----------------|
+| Slide Improvement | Groq `llama-3.1-8b-instant` |
+| Quiz Generation | Groq `llama-3.1-8b-instant` |
+| RAG Embeddings | Gemini `text-embedding-004` |
+| PDF Vision Description | Gemini `gemini-1.5-flash` |
+| Content Extraction / Classification / Planning | **Pure heuristics — zero LLM calls** |
 
-### 2) PDF Image Processing + Vision Description
-- `parsers/pdf_parser.py` now extracts per-page images using `page.get_images(full=True)` + `doc.extract_image(xref)`.
-- Small images (<100x100) are skipped.
-- Extracted image metadata now includes bytes, extension, and base64 payload.
-- New module `ai/image_describer.py` describes images using the new `google-genai` SDK and `gemini-1.5-flash` with rate-limit spacing.
-- Processing limit increased (`MAX_CHUNKS` scaled from 15 to 60) to handle large textbooks and dense PDFs.
+> No OpenAI components are used anywhere in the active pipeline.
 
-### 3) Redesigned Downloadable PPT Output
-- `utils/ppt_builder.py` now generates a modern themed deck:
-  - Branded title slide.
-  - Contextual two-column layout that naturally positions images beside text content.
-  - Included an AI-generated image description caption embedded directly below the image.
-  - Styled bullet hierarchy and highlighted takeaway card.
-  - Closing “Thank You” slide.
-- Output remains in-memory `BytesIO` (no disk writes).
+---
 
-### 4) UI Enhancements in Streamlit
-- Improved slide tab displays images and descriptions when available.
-- Download button exports the newly styled PPT.
-- Visual theme and readability were polished for dashboard elements and captions.
+## 🏗️ Architecture Overview
+
+```mermaid
+flowchart TD
+    A[Upload PPTX / PDF] --> B[Unified Extraction Layer]
+    B --> C[DocumentEntity + SlidePageEntity]
+    C --> D[Intelligent Content Understanding Engine]
+    D --> E[SlideIntelligence × N slides]
+    E --> F[Content Transformation & Visual Planning Engine]
+    C --> F
+    F --> G[TransformationPlan × N slides]
+    G --> H[Day 6: Visual Rendering Engine]
+    C --> I[RAG Chunker + Embedder]
+    I --> J[Groq Improver + Quiz Generator]
+    J --> K[Engagement Scorer]
+    G --> L[JSON Export / In-memory PPTX]
+```
+
+---
+
+## 📦 Sprint Deliverables
+
+### Day 1–2 · Unified Extraction Layer
+
+New strongly-typed `parsers/schema.py` with 8 production dataclasses:
+
+| Class | Purpose |
+|-------|---------|
+| `TextBlockElement` | Paragraphs, headings, bullets with reading order |
+| `TableElement` | Structured tables with headers and row grid |
+| `VisualAssetElement` | Embedded images, icons, scanned pages |
+| `StructuredChartElement` | Data-driven charts with series and categories |
+| `DiagramElement` | Flowcharts, SmartArt, mindmaps with Mermaid export |
+| `EquationElement` | OMML/MathML/LaTeX equations |
+| `SlidePageEntity` | Root container per slide/page |
+| `DocumentEntity` | Root document container |
+
+Parsers:
+- `parsers/ppt_parser.py` — Full PPTX extraction with SmartArt, grouped shapes, charts, equations, speaker notes
+- `parsers/pdf_parser.py` — PyMuPDF text, page-level image extraction with size filtering
+
+---
+
+### Day 3 · RAG Preprocessing & AI Baseline
+
+- `ai/improver.py` — Direct Groq SDK slide improvement (no LangChain)
+- `ai/quiz_gen.py` — Direct Groq SDK quiz generation
+- `rag/embedder.py` — Gemini `text-embedding-004` embeddings
+- `rag/chunker.py` + `rag/retriever.py` — FAISS-backed semantic retrieval
+- `utils/scorer.py` — Heuristic engagement scoring per slide
+
+---
+
+### Day 4 · Intelligent Content Understanding Engine
+
+**Zero LLM. Pure programmatic extraction of 20 concept types per slide.**
+
+Located in `intelligence/`:
+
+| Module | Responsibility |
+|--------|---------------|
+| `concept_extractor.py` | 20-responsibility extractor: topic, learning objective, key concepts, definitions, facts, statistics, processes, comparisons, cause & effect, chronology, advantages, disadvantages, steps, examples, formulas, lists, FAQs, relationships |
+| `content_classifier.py` | Maps slides to `PresentationIntent` enums (Process, Timeline, Comparison, Statistics, Hierarchy, Cycle, etc.) |
+| `text_prioritizer.py` | Assigns `TextPriority` (HIGH / MEDIUM / LOW / DECORATIVE / REDUNDANT / REPEATED) to every text block |
+| `visual_opportunity.py` | Detects 16 visual opportunity types with confidence scores and rationale |
+| `complexity_scorer.py` | 0–10 complexity score mapped to Introductory / Intermediate / Advanced / Expert |
+| `engine.py` | `SlideIntelligenceEngine` — orchestrates all sub-modules into a `SlideIntelligence` object |
+| `schema.py` | All strongly-typed enums and dataclasses for the intelligence layer |
+
+**Output: `SlideIntelligence` object per slide** — the single source of truth consumed by Day 5+.
+
+Verification: `python3 verify_day4.py`
+
+---
+
+### Day 5 · Content Transformation & Visual Planning Engine
+
+**No LLMs. Deterministic transformation planning from `SlideIntelligence` → `TransformationPlan`.**
+
+Located in `intelligence/transformation.py`:
+
+#### Text Actions
+
+Every text block receives one of 6 actions with a stored reason:
+
+| Action | Description |
+|--------|-------------|
+| `KEEP` | Retain as-is (title, key definition, critical fact) |
+| `SUMMARIZE` | Compress to first sentence / 10 key words |
+| `REMOVE` | Boilerplate, decorative, footer, redundant text |
+| `MERGE` | Combine near-duplicate blocks |
+| `MOVE_TO_VISUAL` | Replace with structured visual specification |
+| `MOVE_TO_NOTES` | Move verbose detail to speaker notes |
+
+#### Visual Specifications
+
+Generates structured, production-ready specs for all 15 visual types:
+
+| Spec Type | Contents |
+|-----------|----------|
+| `FlowchartSpecification` | nodes, edges, labels, start/end/decision nodes, orientation |
+| `TimelineSpecification` | ordered events, dates, milestones |
+| `ComparisonTableSpecification` | headers, rows, highlight columns, merge cells |
+| `DecisionTreeSpecification` | branching nodes, conditions, outcomes |
+| `HierarchySpecification` | root, levels, parent-child relationships |
+| `CycleSpecification` | steps, direction, closed/open |
+| `RoadmapSpecification` | phases, milestones, deliverables |
+| `MatrixSpecification` | 4 quadrants, x/y axes |
+| `KPICardSpecification` | metrics with value, label, trend |
+| `ChecklistSpecification` | ordered task items with required flags |
+| `OrganizationChartSpecification` | roles with reporting hierarchy |
+| `IconGridSpecification` | concept-icon-explanation triples |
+| `GraphSpecification` | graph type, axes, series, values |
+| `InfographicSpecification` | layout type, multi-section blocks |
+| `AIImageSpecification` | production-ready DALL-E/Imagen prompt: subject, style, composition, camera angle, educational purpose, visual emphasis, negative prompt |
+
+#### `TransformationPlan` Schema
+
+```json
+{
+  "slide_id": 2,
+  "text_actions": {
+    "<block_id>": {
+      "original_text": "...",
+      "action": "MOVE_TO_VISUAL",
+      "reason": "Step-by-step procedural information moved into flowchart spec.",
+      "transformed_text": null
+    }
+  },
+  "visual_actions": [
+    {
+      "action_type": "REPLACE_TEXT_WITH_VISUAL",
+      "target_opportunity": "Flowchart",
+      "description": "...",
+      "source_block_ids": ["s2_tb_0", "s2_tb_1"]
+    }
+  ],
+  "visual_specs": [
+    {
+      "type": "Flowchart",
+      "spec": {
+        "nodes": [{"id": "step_1", "label": "Upload PPTX", "type": "process"}],
+        "edges": [{"from": "step_1", "to": "step_2"}],
+        "start_node": "step_1",
+        "end_node": "step_4",
+        "decision_nodes": ["step_3"],
+        "recommended_orientation": "LR"
+      }
+    }
+  ],
+  "remaining_text": ["Slide Title"],
+  "speaker_notes": "Focus learning objective: ...",
+  "compression_statistics": {
+    "original_word_count": 51,
+    "target_word_count": 17,
+    "compression_ratio": 0.333,
+    "expected_readability_improvement": "90.0% improvement"
+  },
+  "confidence": 0.89
+}
+```
+
+Verification: `python3 verify_day5.py` → exports `day5_transformation_plans.json`
 
 ---
 
@@ -79,11 +227,11 @@ cd learnova
 ```bash
 python -m venv venv
 
-# Windows
-venv\Scripts\activate
-
 # macOS/Linux
 source venv/bin/activate
+
+# Windows
+venv\Scripts\activate
 ```
 
 ### 3. Install dependencies
@@ -104,33 +252,68 @@ GROQ_API_KEY=your-groq-key-here
 streamlit run app.py
 ```
 
+### 6. Run verification scripts
+```bash
+# Verify Day 4 — Intelligence Engine
+python3 verify_day4.py
+
+# Verify Day 5 — Transformation Planning Engine
+python3 verify_day5.py
+```
+
+### 7. Run test suite
+```bash
+python3 -m pytest -v
+# 20 passed, 2 skipped (parser integration — require real files)
+```
+
 ---
 
-## 📂 Project Structure (Updated)
+## 📂 Project Structure
 
 ```text
 learnova/
-├── .streamlit/
-│   └── config.toml
-├── app.py
+├── app.py                          # Streamlit frontend
 ├── logger.py
 ├── requirements.txt
-├── ai/
-│   ├── improver.py           # Groq slide improvement
-│   ├── quiz_gen.py           # Groq quiz generation
-│   └── image_describer.py    # Gemini Vision image descriptions
-├── parsers/
-│   ├── ppt_parser.py
-│   └── pdf_parser.py         # Text + image extraction (bytes/base64/ext)
-├── rag/
+├── verify_day4.py                  # Day 4 runtime verification
+├── verify_day5.py                  # Day 5 runtime verification
+├── day5_transformation_plans.json  # Sample output (auto-generated)
+│
+├── parsers/                        # Day 1–2: Unified Extraction Layer
+│   ├── schema.py                   # 8 production dataclasses
+│   ├── ppt_parser.py               # Full PPTX extraction
+│   └── pdf_parser.py               # PyMuPDF text + image extraction
+│
+├── intelligence/                   # Day 4–5: Intelligence & Transformation
+│   ├── schema.py                   # SlideIntelligence + enums
+│   ├── engine.py                   # SlideIntelligenceEngine orchestrator
+│   ├── concept_extractor.py        # 20-responsibility extractor
+│   ├── content_classifier.py       # PresentationIntent classifier
+│   ├── text_prioritizer.py         # TextPriority assignment
+│   ├── visual_opportunity.py       # 16-type visual opportunity detector
+│   ├── complexity_scorer.py        # 0–10 complexity scoring
+│   └── transformation.py           # Day 5: TransformationPlan engine + 15 visual specs
+│
+├── ai/                             # Day 3: AI Modules
+│   ├── improver.py                 # Groq slide improvement
+│   ├── quiz_gen.py                 # Groq quiz generation
+│   └── image_describer.py          # Gemini Vision image descriptions
+│
+├── rag/                            # Day 3: RAG Pipeline
 │   ├── chunker.py
-│   ├── embedder.py           # Gemini embeddings
-│   └── retriever.py
+│   ├── embedder.py                 # Gemini text-embedding-004
+│   └── retriever.py                # FAISS semantic retrieval
+│
 ├── utils/
-│   ├── scorer.py
-│   └── ppt_builder.py        # Redesigned themed PPT generation
+│   ├── scorer.py                   # Engagement quality scorer
+│   └── ppt_builder.py              # In-memory themed PPTX export
+│
 ├── tests/
-│   └── test_learnova.py
+│   ├── test_learnova.py
+│   ├── test_intelligence.py        # Day 4 unit tests
+│   └── test_transformation.py      # Day 5 unit tests
+│
 ├── logs/
 │   └── error.log
 └── .env
@@ -140,40 +323,26 @@ learnova/
 
 ## 🧰 Core Dependencies
 
-- `streamlit`
-- `python-pptx`
-- `PyMuPDF`
-- `python-dotenv`
-- `groq`
-- `google-genai` (New Unified SDK)
-- `langchain-community`
-- `faiss-cpu`
-- `pandas`
-- `altair`
-- `Pillow`
-
----
-
-## 🛠 Processing Flow
-
-```mermaid
-flowchart LR
-    U[Upload PPT/PDF] --> P[Parsers]
-    P --> C[Chunker]
-    P --> I[PDF Image Extraction]
-    C --> G1[Groq Improver]
-    G1 --> G2[Groq Quiz Generator]
-    G1 --> S[Engagement Scorer]
-    I --> V[Gemini Vision Describer]
-    G1 --> B[PPT Builder]
-    V --> B
-    B --> D[Download Improved PPT]
-```
+| Package | Purpose |
+|---------|---------|
+| `streamlit` | Frontend UI |
+| `python-pptx` | PPTX parsing and generation |
+| `PyMuPDF` | PDF text and image extraction |
+| `python-dotenv` | Environment variable management |
+| `groq` | Groq LLM API (slide improvement, quizzes) |
+| `google-genai` | Gemini embeddings + vision |
+| `langchain-community` | LangChain compatibility layer |
+| `faiss-cpu` | Vector similarity search |
+| `pandas` | Data manipulation |
+| `altair` | Chart rendering |
+| `Pillow` | Image processing |
 
 ---
 
 ## 📝 Notes
 
-- If Groq key/quota is invalid, slide improvement/quiz generation will fail.
-- If Gemini quota is limited, image descriptions may be skipped, but text pipeline can still run.
+- If Groq key/quota is invalid, slide improvement/quiz generation will fail gracefully.
+- If Gemini quota is limited, image descriptions may be skipped; the text pipeline continues.
+- The Intelligence Engine (Day 4) and Transformation Engine (Day 5) require **no API keys** — they run entirely on heuristics.
 - PPT output is always generated in memory and returned as a downloadable buffer.
+- `TransformationPlan` objects are the single source of truth consumed by the Day 6 Visual Rendering Engine.

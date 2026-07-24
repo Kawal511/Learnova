@@ -16,6 +16,11 @@ from intelligence.schema import (
     VisualOpportunity,
     VisualOpportunityType,
 )
+from intelligence.transformation import (
+    SlideTransformationEngine,
+    TransformationPlan,
+    TextActionType,
+)
 
 __all__ = [
     "SlideIntelligenceEngine",
@@ -28,4 +33,7 @@ __all__ = [
     "ComplexityLevel",
     "ConceptRelationship",
     "RelationshipType",
+    "SlideTransformationEngine",
+    "TransformationPlan",
+    "TextActionType",
 ]
