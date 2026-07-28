@@ -12,7 +12,11 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["PYTHONFAULTHANDLER"] = "1"
+# macOS: prevent segfault when forking after loading Objective-C/C-extension libraries
+os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+import gc
 import hashlib
 import tempfile
 import time
@@ -392,10 +396,10 @@ if parsed:
                     scores = score_all_slides(st.session_state.final_deck)
                     st.session_state.scores = scores
 
-                # Force garbage collection to clean up Groq/httpx C-extension objects
-                # BEFORE spawning subprocesses — prevents macOS SIGSEGV (exit 139)
-                import gc
+                # Force garbage collection to clean up Groq/httpx/FAISS C-extension
+                # objects BEFORE spawning subprocesses — prevents macOS SIGSEGV (exit 139)
                 gc.collect()
+                gc.collect()  # second pass for cyclic references
 
                 with st.spinner("📦 Building Animated PPTX Deck..."):
                     try:

@@ -15,6 +15,9 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["PYDANTIC_DISABLE_PLUGINS"] = "1"
+# macOS: prevent segfault when Objective-C runtime re-initializes in forked process
+os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import sys
 import json
