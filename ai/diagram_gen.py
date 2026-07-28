@@ -1,0 +1,74 @@
+"""
+AI Diagram Generator Module for Learnova
+Generates valid Mermaid.js code for flowcharts, sequence diagrams, and process workflows.
+"""
+
+import json
+import os
+import re
+import time
+from dotenv import load_dotenv
+from groq import Groq
+from logger import logger
+
+load_dotenv()
+
+SYSTEM_PROMPT = (
+    "You are an expert educational visual designer. "
+    "Convert the raw educational content into a valid, concise Mermaid.js diagram definition. "
+    "Choose graph TD or graph LR for flowcharts, or sequenceDiagram for sequential interactions. "
+    "Keep node labels brief (max 5-7 words per node). "
+    "Do NOT use special characters or unescaped quotes in node labels. "
+    "Return ONLY valid JSON in this format: "
+    '{"mermaid_code": "graph TD\\n  A[Step 1] --> B[Step 2]", "diagram_title": "..."}'
+)
+
+def _get_client() -> Groq:
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise ValueError("GROQ_API_KEY not found in environment variables.")
+    return Groq(api_key=api_key, timeout=10.0)
+
+def generate_mermaid_diagram(text: str, title: str = "") -> dict:
+    """
+    Generate Mermaid.js code for process/workflow text.
+    """
+    try:
+        client = _get_client()
+        completion = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"Title: {title}\nContent:\n{text}"},
+            ],
+            temperature=0.3,
+            max_tokens=600,
+            timeout=10.0,
+        )
+        raw_content = (completion.choices[0].message.content or "").strip()
+        match = re.search(r"\{.*\}", raw_content, re.DOTALL)
+        if match:
+            raw_content = match.group(0)
+        cleaned = re.sub(r"^```(?:json)?\s*", "", raw_content)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+        data = json.loads(cleaned)
+        
+        mermaid_code = data.get("mermaid_code", "")
+        # Basic cleanup for mermaid formatting
+        mermaid_code = mermaid_code.replace("\\n", "\n").strip()
+        
+        if not mermaid_code.startswith(("graph", "flowchart", "sequenceDiagram", "stateDiagram", "classDiagram")):
+            mermaid_code = f"graph TD\n  A[{title or 'Start'}] --> B[Process Content]"
+
+        return {
+            "mermaid_code": mermaid_code,
+            "diagram_title": data.get("diagram_title", title or "Process Diagram"),
+        }
+    except Exception as e:
+        logger.error("Failed to generate Mermaid diagram: %s", e)
+        # Fallback simple diagram
+        safe_title = re.sub(r"[^\w\s]", "", title[:30]) or "Start"
+        return {
+            "mermaid_code": f"graph TD\n  A[{safe_title}] --> B[Analyze Details] --> C[Key Outcome]",
+            "diagram_title": title or "Process Diagram",
+        }
