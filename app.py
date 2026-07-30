@@ -626,13 +626,10 @@ if st.session_state.final_deck:
                     headers = imp.get("table_headers", [])
                     rows = imp.get("table_rows", [])
                     if headers and rows:
-                        # Use safe_dataframe to prevent PyArrow Arrow serialisation
-                        # segfault (Fatal Python error at pyarrow/pandas_compat.py)
-                        # caused by nested dicts/lists from LLM output.
                         safe_dataframe(
                             rows,
                             columns=[str(h) for h in headers],
-                            use_container_width=True,
+                            label=f"Slide {idx + 1} — {title}",
                         )
 
                 elif l_type == "METRIC":
@@ -697,8 +694,6 @@ if st.session_state.final_deck:
         st.subheader("📊 Engagement Score Breakdown")
         st.metric("Overall Engagement Score", f"{scores_data.get('overall_score', 0)} / 100")
         if scores_list:
-            # Flatten breakdown dict into primitive columns — avoids Arrow
-            # serialisation crash if any breakdown value is a numpy float.
             score_rows = []
             for i, s in enumerate(scores_list):
                 row = {"Slide": f"Slide {i+1}", "Score": int(s.get("score", 0))}
@@ -708,4 +703,4 @@ if st.session_state.final_deck:
                     except (TypeError, ValueError):
                         row[str(k)] = str(v)
                 score_rows.append(row)
-            safe_dataframe(score_rows, use_container_width=True)
+            safe_dataframe(score_rows, label="Engagement Score Breakdown")
