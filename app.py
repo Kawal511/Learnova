@@ -38,6 +38,7 @@ from utils.ppt_builder import build_pptx
 from utils.web_deck_builder import build_web_deck
 from utils.subprocess_builder import build_pptx_safe, build_html_safe
 from utils.theme_engine import THEMES, get_theme, auto_detect_theme
+from utils.streamlit_helpers import safe_dataframe, safe_json, safe_display
 from ai.image_describer import describe_images
 from logger import logger
 
@@ -361,11 +362,19 @@ if parsed:
         if st.button("🚀 Process Visual Layouts, Flowcharts & Interleaved Quizzes"):
             t_start = time.time()
             try:
-                chunks = chunk_parsed_data(parsed)
+                # ── Stage 1: Chunking ─────────────────────────────────────
+                _s = time.time()
+                logger.info("[pipeline] START chunking — %d parsed items", len(parsed))
+                try:
+                    chunks = chunk_parsed_data(parsed)
+                    logger.info("[pipeline] SUCCESS chunking — %d chunks (%.2fs)", len(chunks), time.time() - _s)
+                except Exception as e:
+                    logger.error("[pipeline] FAILURE chunking (%.2fs): %s", time.time() - _s, e)
+                    raise
 
-                # Process images with Gemini Vision
+                # ── Stage 2: Gemini Vision OCR ────────────────────────────
                 images_to_describe = []
-                seen_keys = set()
+                seen_keys: set = set()
                 for i, chunk_data in enumerate(chunks):
                     if "image" in chunk_data and chunk_data["image"] and chunk_data["image"].get("bytes"):
                         img_bytes = chunk_data["image"]["bytes"]
@@ -380,81 +389,145 @@ if parsed:
 
                 if images_to_describe:
                     with st.spinner("🔍 Running Gemini Vision OCR & Diagram Extraction..."):
+                        _s = time.time()
+                        logger.info("[pipeline] START gemini-vision — %d images", len(images_to_describe))
                         try:
                             described = describe_images(images_to_describe)
-                            desc_map = {d["bytes"]: d["description"] for d in described if "bytes" in d and "description" in d}
+                            desc_map = {
+                                d["bytes"]: d["description"]
+                                for d in described
+                                if "bytes" in d and "description" in d
+                            }
                             for chunk_data in chunks:
                                 if "image" in chunk_data and chunk_data["image"]:
                                     b = chunk_data["image"].get("bytes")
                                     if b in desc_map:
                                         chunk_data["image"]["description"] = desc_map[b]
-                                        chunk_data["text"] += f"\n\n[Extracted OCR & Image Diagram Content:\n{desc_map[b]}]"
+                                        chunk_data["text"] += (
+                                            f"\n\n[Extracted OCR & Image Diagram Content:\n{desc_map[b]}]"
+                                        )
+                            logger.info(
+                                "[pipeline] SUCCESS gemini-vision — %d described (%.2fs)",
+                                len(desc_map), time.time() - _s,
+                            )
                         except Exception as e:
-                            logger.warning("Gemini Vision OCR description skipped: %s", e)
+                            logger.warning(
+                                "[pipeline] FAILURE gemini-vision (%.2fs): %s — OCR skipped",
+                                time.time() - _s, e,
+                            )
 
-                # ── RAG Indexing Step ─────────────────────────────────────
-                retriever = None  # ensure always defined before conditional del
+                # ── Stage 3: RAG / FAISS indexing ────────────────────────
+                retriever = None
                 with st.spinner("⚡ Building FAISS Vector Index & RAG Context Store..."):
+                    _s = time.time()
+                    logger.info("[pipeline] START rag-index")
                     try:
                         retriever = ChunkRetriever(chunks)
-                        logger.info("RAG FAISS index built successfully in app.py")
+                        logger.info("[pipeline] SUCCESS rag-index (%.2fs)", time.time() - _s)
                     except Exception as e:
-                        logger.warning("RAG FAISS indexing skipped: %s", e)
+                        logger.warning(
+                            "[pipeline] FAILURE rag-index (%.2fs): %s — continuing without RAG",
+                            time.time() - _s, e,
+                        )
 
-                # Release the retriever immediately — it is only needed for
-                # context storage and holding it past this point risks C-extension
-                # destructor conflicts with Groq/httpx threads in Streamlit.
+                # Release retriever — holding it risks C-extension destructor
+                # conflicts with Groq/httpx threads inside Streamlit.
                 if retriever is not None:
                     del retriever
 
+                # ── Stage 4: Layout classification ────────────────────────
                 with st.spinner("🤖 Classifying content layouts (Flowcharts, Tables, Metrics)..."):
-                    improved = improve_chunks(chunks)
-                    st.session_state.improved_results = improved
+                    _s = time.time()
+                    logger.info("[pipeline] START improve-chunks")
+                    try:
+                        improved = improve_chunks(chunks)
+                        st.session_state.improved_results = improved
+                        logger.info(
+                            "[pipeline] SUCCESS improve-chunks — %d slides (%.2fs)",
+                            len(improved), time.time() - _s,
+                        )
+                    except Exception as e:
+                        logger.error("[pipeline] FAILURE improve-chunks (%.2fs): %s", time.time() - _s, e)
+                        raise
 
+                # ── Stage 5: Quiz generation ──────────────────────────────
                 with st.spinner("🧠 Generating quizzes & interleaving checkpoint slides..."):
-                    quizzes = generate_quizzes(improved)
-                    st.session_state.quizzes = quizzes
-                    freq = st.session_state.get("quiz_freq", 4)
-                    final_deck = interleave_quizzes_into_slides(improved, quizzes, frequency=freq)
-                    st.session_state.final_deck = final_deck
+                    _s = time.time()
+                    logger.info("[pipeline] START quiz-gen")
+                    try:
+                        quizzes = generate_quizzes(improved)
+                        st.session_state.quizzes = quizzes
+                        freq = st.session_state.get("quiz_freq", 4)
+                        final_deck = interleave_quizzes_into_slides(improved, quizzes, frequency=freq)
+                        st.session_state.final_deck = final_deck
+                        logger.info(
+                            "[pipeline] SUCCESS quiz-gen — %d quizzes, deck=%d slides (%.2fs)",
+                            len(quizzes), len(final_deck), time.time() - _s,
+                        )
+                    except Exception as e:
+                        logger.error("[pipeline] FAILURE quiz-gen (%.2fs): %s", time.time() - _s, e)
+                        raise
 
+                # ── Stage 6: Engagement scoring ───────────────────────────
                 with st.spinner("📊 Calculating engagement metrics..."):
-                    scores = score_all_slides(st.session_state.final_deck)
-                    st.session_state.scores = scores
+                    _s = time.time()
+                    logger.info("[pipeline] START scoring")
+                    try:
+                        scores = score_all_slides(st.session_state.final_deck)
+                        st.session_state.scores = scores
+                        logger.info(
+                            "[pipeline] SUCCESS scoring — overall=%s/100 (%.2fs)",
+                            scores.get("overall_score", "?"), time.time() - _s,
+                        )
+                    except Exception as e:
+                        logger.error("[pipeline] FAILURE scoring (%.2fs): %s", time.time() - _s, e)
+                        st.session_state.scores = {"slide_scores": [], "overall_score": 0}
 
-                # session_state.retriever was already deleted above after
-                # indexing — no need to delete here (guard for old sessions).
                 if "retriever" in st.session_state:
                     del st.session_state["retriever"]
 
+                # ── Stage 7: PPTX export ──────────────────────────────────
                 with st.spinner("📦 Building Animated PPTX Deck..."):
+                    _s = time.time()
+                    logger.info("[pipeline] START pptx-build")
                     try:
                         st.session_state.pptx_bytes = build_pptx_safe(
                             st.session_state.final_deck,
                             topic_title=file_name,
-                            theme_id=active_theme
+                            theme_id=active_theme,
                         )
+                        logger.info("[pipeline] SUCCESS pptx-build (%.2fs)", time.time() - _s)
                     except Exception as e:
-                        logger.error("PPTX build failed: %s", e)
+                        logger.error("[pipeline] FAILURE pptx-build (%.2fs): %s", time.time() - _s, e)
                         st.session_state.pptx_bytes = None
 
+                # ── Stage 8: HTML export ──────────────────────────────────
                 with st.spinner("🌐 Building Interactive HTML Web Deck..."):
+                    _s = time.time()
+                    logger.info("[pipeline] START html-build")
                     try:
                         st.session_state.html_bytes = build_html_safe(
                             st.session_state.final_deck,
                             topic_title=file_name,
-                            theme_id=active_theme
+                            theme_id=active_theme,
                         )
+                        logger.info("[pipeline] SUCCESS html-build (%.2fs)", time.time() - _s)
                     except Exception as e:
-                        logger.error("HTML build failed: %s", e)
+                        logger.error("[pipeline] FAILURE html-build (%.2fs): %s", time.time() - _s, e)
                         st.session_state.html_bytes = None
 
                 st.session_state.processing_time = round(time.time() - t_start, 1)
-                st.success(f"✅ Done! Processed in {st.session_state.processing_time}s — scroll down for your deck.")
-                # NOTE: No st.rerun() — results section renders immediately below from session_state
+                logger.info(
+                    "[pipeline] COMPLETE — total=%.1fs",
+                    st.session_state.processing_time,
+                )
+                st.success(
+                    f"✅ Done! Processed in {st.session_state.processing_time}s "
+                    f"— scroll down for your deck."
+                )
 
             except Exception as e:
-                logger.error("Processing failed: %s", e, exc_info=True)
+                logger.error("[pipeline] FATAL (%.1fs): %s", time.time() - t_start, e, exc_info=True)
                 st.error(f"⚠️ Processing failed: {e}")
 
 # ── Results & Exporters ──────────────────────────────────────────────────────
@@ -553,8 +626,14 @@ if st.session_state.final_deck:
                     headers = imp.get("table_headers", [])
                     rows = imp.get("table_rows", [])
                     if headers and rows:
-                        df = pd.DataFrame(rows, columns=headers)
-                        st.dataframe(df, use_container_width=True)
+                        # Use safe_dataframe to prevent PyArrow Arrow serialisation
+                        # segfault (Fatal Python error at pyarrow/pandas_compat.py)
+                        # caused by nested dicts/lists from LLM output.
+                        safe_dataframe(
+                            rows,
+                            columns=[str(h) for h in headers],
+                            use_container_width=True,
+                        )
 
                 elif l_type == "METRIC":
                     m_val = imp.get("metric_value", "100%")
@@ -618,8 +697,15 @@ if st.session_state.final_deck:
         st.subheader("📊 Engagement Score Breakdown")
         st.metric("Overall Engagement Score", f"{scores_data.get('overall_score', 0)} / 100")
         if scores_list:
-            df_scores = pd.DataFrame([
-                {"Slide": f"Slide {i+1}", "Score": s["score"], **s["breakdown"]}
-                for i, s in enumerate(scores_list)
-            ])
-            st.dataframe(df_scores, use_container_width=True)
+            # Flatten breakdown dict into primitive columns — avoids Arrow
+            # serialisation crash if any breakdown value is a numpy float.
+            score_rows = []
+            for i, s in enumerate(scores_list):
+                row = {"Slide": f"Slide {i+1}", "Score": int(s.get("score", 0))}
+                for k, v in s.get("breakdown", {}).items():
+                    try:
+                        row[str(k)] = float(v)
+                    except (TypeError, ValueError):
+                        row[str(k)] = str(v)
+                score_rows.append(row)
+            safe_dataframe(score_rows, use_container_width=True)
