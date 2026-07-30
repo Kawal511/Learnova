@@ -125,13 +125,21 @@ def _run_worker(mode: str, deck: list, topic_title: str, theme_id: str) -> bytes
 
 
 def build_pptx_safe(deck: list, topic_title: str = "presentation", theme_id: str = "auto") -> bytes:
-    """Build PPTX deck safely in memory. Pure Python python-pptx engine."""
-    from utils.ppt_builder import build_pptx
-    return build_pptx(deck, topic_title=topic_title, theme_id=theme_id)
+    """Build PPTX deck safely via worker subprocess to isolate C-extensions and prevent macOS segfaults (exit 139)."""
+    try:
+        return _run_worker("pptx", deck, topic_title, theme_id)
+    except Exception as e:
+        logger.error("Subprocess build_pptx failed: %s — falling back to in-process builder", e)
+        from utils.ppt_builder import build_pptx
+        return build_pptx(deck, topic_title=topic_title, theme_id=theme_id)
 
 
 def build_html_safe(deck: list, topic_title: str = "presentation", theme_id: str = "auto") -> bytes:
-    """Build interactive HTML deck safely in memory. Pure Python HTML engine."""
-    from utils.web_deck_builder import build_web_deck
-    html_str = build_web_deck(deck, topic_title=topic_title, theme_id=theme_id)
-    return html_str.encode("utf-8")
+    """Build interactive HTML deck safely via worker subprocess to isolate C-extensions and prevent macOS segfaults (exit 139)."""
+    try:
+        return _run_worker("html", deck, topic_title, theme_id)
+    except Exception as e:
+        logger.error("Subprocess build_html failed: %s — falling back to in-process builder", e)
+        from utils.web_deck_builder import build_web_deck
+        html_str = build_web_deck(deck, topic_title=topic_title, theme_id=theme_id)
+        return html_str.encode("utf-8")

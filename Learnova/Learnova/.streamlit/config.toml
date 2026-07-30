@@ -1,9 +1,0 @@
-[theme]
-base="light"
-primaryColor="#ccff00"
-backgroundColor="#ffffff"
-textColor="#000000"
-font="sans serif"
-
-[server]
-maxUploadSize = 50

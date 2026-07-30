@@ -3,6 +3,8 @@ Learnova – AI Presentation Engine
 Streamlit UI with AI-improved slides, dynamic visual layouts (Flowcharts, Tables, Metrics), quizzes, and web exports.
 """
 
+import faulthandler
+faulthandler.enable()
 import os
 os.environ["PYDANTIC_DISABLE_PLUGINS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
