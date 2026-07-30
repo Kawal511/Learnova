@@ -1,18 +1,23 @@
 """
 AI Improver Module for Learnova
 Uses Groq and Layout Router to transform raw slide text into structured, visual educational content.
+
+IMPORTANT: Do NOT use ThreadPoolExecutor here.
+httpx.Client has internal keepalive connection pool background threads. When a ThreadPoolExecutor
+exits and Python GC destroys the GroqProvider (httpx client), those background threads crash
+macOS with exit code 139 (SIGSEGV). Sequential processing with singleton provider is safe.
 """
 
-import time
 from ai.layout_router import classify_and_structure_chunk
 from logger import logger
 
 MAX_CHUNKS = 60
-DELAY_BETWEEN_CALLS = 0.5
+
 
 def improve_chunks(chunks: list[dict]) -> list[dict]:
     """
     Transform raw text chunks into visually classified slide items.
+    Sequential execution — safe on macOS with httpx connection pools.
     """
     capped = chunks[:MAX_CHUNKS]
     results = []
@@ -36,9 +41,6 @@ def improve_chunks(chunks: list[dict]) -> list[dict]:
             "original": chunk,
             "improved": improved,
         })
-
-        if i < len(capped) - 1:
-            time.sleep(DELAY_BETWEEN_CALLS)
 
     logger.info("Improved and visually routed %d / %d chunks", len(results), len(chunks))
     return results

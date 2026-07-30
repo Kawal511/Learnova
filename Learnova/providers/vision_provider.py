@@ -7,7 +7,6 @@ import io
 import os
 import time
 from typing import Any, Optional
-from google import genai
 from PIL import Image
 from providers.provider_base import VisionProvider
 from logger import logger
@@ -26,7 +25,18 @@ class GeminiVisionProvider(VisionProvider):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY not found in environment variables.")
-        self.client = genai.Client(api_key=self.api_key)
+        # Lazy import: loading google.genai at module level starts gRPC C-threads
+        # which conflict with macOS fork() in subprocesses and cause segfault (exit 139).
+        from google import genai as _genai
+        # Set a 4-second HTTP timeout so SDK calls never block longer than that.
+        # This prevents zombie threads when quota errors hit.
+        try:
+            from google.genai import types as _types
+            http_opts = _types.HttpOptions(timeout=4000)  # timeout in milliseconds
+            self.client = _genai.Client(api_key=self.api_key, http_options=http_opts)
+        except Exception:
+            # Fallback if HttpOptions is not available in this SDK version
+            self.client = _genai.Client(api_key=self.api_key)
 
     def describe_image(self, image_bytes: bytes, prompt: str, **kwargs: Any) -> str:
         """
@@ -61,23 +71,18 @@ class GeminiVisionProvider(VisionProvider):
                         return response.text.strip()
                 except Exception as e:
                     err_str = str(e)
-                    if "RESOURCE_EXHAUSTED" in err_str or "Quota exceeded" in err_str:
+                    if "RESOURCE_EXHAUSTED" in err_str or "Quota exceeded" in err_str or "429" in err_str:
                         logger.warning(
                             "Gemini Vision API quota limit reached on model %s: %s",
                             model_name,
                             err_str,
                         )
-                        if model_name == models_to_try[-1]:
-                            quota_exceeded = True
-                            raise ValueError(f"Quota exceeded: {err_str}")
-                        break  # Try next model
-                    elif "503" in err_str or "429" in err_str:
-                        time.sleep(1.5 * (attempt + 1))
+                        raise ValueError(f"Quota exceeded: {err_str}")
+                    elif "503" in err_str:
+                        time.sleep(1.0 * (attempt + 1))
                     else:
                         break  # non-retryable error for this model
 
-        if quota_exceeded:
-            raise ValueError("Quota exceeded for all tried Gemini Vision models.")
         raise ValueError("Could not generate content from Gemini Vision API.")
 
     def ocr_image(self, image_bytes: bytes, **kwargs: Any) -> str:

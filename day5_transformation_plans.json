@@ -2,13 +2,13 @@
   {
     "slide_id": 0,
     "text_actions": {
-      "s0_4401074048_tb_0": {
+      "s0_4415006976_tb_0": {
         "original_text": "Artificial Intelligence in Education",
         "action": "KEEP",
         "reason": "Title block is retained to establish slide context and subject.",
         "transformed_text": "Artificial Intelligence in Education"
       },
-      "s0_4404158032_tb_0": {
+      "s0_4415496288_tb_0": {
         "original_text": "Transforming Outdated Courseware into Engaging Learning Modules",
         "action": "KEEP",
         "reason": "Retained as key supporting educational detail.",
@@ -21,8 +21,8 @@
         "target_opportunity": "AI Image",
         "description": "Generated AI visual prompt to create a supporting illustration for the main topic.",
         "source_block_ids": [
-          "s0_4401074048_tb_0",
-          "s0_4404158032_tb_0"
+          "s0_4415006976_tb_0",
+          "s0_4415496288_tb_0"
         ]
       }
     ],
@@ -56,25 +56,25 @@
   {
     "slide_id": 1,
     "text_actions": {
-      "s1_4404161392_tb_0": {
+      "s1_4415499984_tb_0": {
         "original_text": "Key Challenges in Higher Education",
         "action": "KEEP",
         "reason": "Title block is retained to establish slide context and subject.",
         "transformed_text": "Key Challenges in Higher Education"
       },
-      "s1_4404161296_tb_0": {
+      "s1_4415500032_tb_0": {
         "original_text": "Traditional presentations suffer from heavy text density and passive student engagement.",
         "action": "KEEP",
         "reason": "Retained as key supporting educational detail.",
         "transformed_text": "Traditional presentations suffer from heavy text density and passive student engagement."
       },
-      "s1_4404161296_tb_1": {
+      "s1_4415500032_tb_1": {
         "original_text": "Lack of interactive assessment checkpoints during lectures reduces retention rates.",
         "action": "KEEP",
         "reason": "Retained as key supporting educational detail.",
         "transformed_text": "Lack of interactive assessment checkpoints during lectures reduces retention rates."
       },
-      "s1_4404161296_tb_2": {
+      "s1_4415500032_tb_2": {
         "original_text": "Manual redesign of slides requires hours of design expertise per lecture.",
         "action": "KEEP",
         "reason": "Retained as key supporting educational detail.",
@@ -87,7 +87,7 @@
         "target_opportunity": "Icon Grid",
         "description": "Structured text transformed programmatically into Icon Grid layout.",
         "source_block_ids": [
-          "s1_4404161392_tb_0"
+          "s1_4415499984_tb_0"
         ]
       },
       {
@@ -95,7 +95,7 @@
         "target_opportunity": "SmartArt",
         "description": "Structured text transformed programmatically into SmartArt layout.",
         "source_block_ids": [
-          "s1_4404161392_tb_0"
+          "s1_4415499984_tb_0"
         ]
       },
       {
@@ -109,8 +109,8 @@
         "target_opportunity": "AI Image",
         "description": "Generated AI visual prompt to create a supporting illustration for the main topic.",
         "source_block_ids": [
-          "s1_4404161392_tb_0",
-          "s1_4404161296_tb_0"
+          "s1_4415499984_tb_0",
+          "s1_4415500032_tb_0"
         ]
       }
     ],
@@ -196,31 +196,31 @@
   {
     "slide_id": 2,
     "text_actions": {
-      "s2_4404162496_tb_0": {
+      "s2_4415501088_tb_0": {
         "original_text": "Learnova Automated Processing Pipeline Workflow",
         "action": "KEEP",
         "reason": "Title block is retained to establish slide context and subject.",
         "transformed_text": "Learnova Automated Processing Pipeline Workflow"
       },
-      "s2_4404162832_tb_0": {
+      "s2_4415501472_tb_0": {
         "original_text": "Step 1: Upload raw PPTX or PDF textbook.",
         "action": "MOVE_TO_VISUAL",
         "reason": "Step-by-step procedural information is moved into a flowchart visual specification.",
         "transformed_text": null
       },
-      "s2_4404162832_tb_1": {
+      "s2_4415501472_tb_1": {
         "original_text": "Step 2: Parse document layout, tables, SmartArt, and embedded diagram images.",
         "action": "MOVE_TO_VISUAL",
         "reason": "Step-by-step procedural information is moved into a flowchart visual specification.",
         "transformed_text": null
       },
-      "s2_4404162832_tb_2": {
+      "s2_4415501472_tb_2": {
         "original_text": "Step 3: Route content through AI Layout Router to classify dynamic visual structures.",
         "action": "MOVE_TO_VISUAL",
         "reason": "Step-by-step procedural information is moved into a flowchart visual specification.",
         "transformed_text": null
       },
-      "s2_4404162832_tb_3": {
+      "s2_4415501472_tb_3": {
         "original_text": "Step 4: Generate interactive quizzes and export animated PPTX and HTML web decks.",
         "action": "MOVE_TO_VISUAL",
         "reason": "Step-by-step procedural information is moved into a flowchart visual specification.",
@@ -233,10 +233,10 @@
         "target_opportunity": "Flowchart",
         "description": "Structured text transformed programmatically into Flowchart layout.",
         "source_block_ids": [
-          "s2_4404162832_tb_0",
-          "s2_4404162832_tb_3",
-          "s2_4404162832_tb_1",
-          "s2_4404162832_tb_2"
+          "s2_4415501472_tb_2",
+          "s2_4415501472_tb_1",
+          "s2_4415501472_tb_3",
+          "s2_4415501472_tb_0"
         ]
       },
       {
@@ -244,7 +244,7 @@
         "target_opportunity": "Comparison Table",
         "description": "Structured text transformed programmatically into Comparison Table layout.",
         "source_block_ids": [
-          "s2_4404162832_tb_2"
+          "s2_4415501472_tb_2"
         ]
       },
       {
@@ -252,7 +252,7 @@
         "target_opportunity": "Matrix",
         "description": "Structured text transformed programmatically into Matrix layout.",
         "source_block_ids": [
-          "s2_4404162496_tb_0"
+          "s2_4415501088_tb_0"
         ]
       },
       {
@@ -260,8 +260,8 @@
         "target_opportunity": "AI Image",
         "description": "Generated AI visual prompt to create a supporting illustration for the main topic.",
         "source_block_ids": [
-          "s2_4404162496_tb_0",
-          "s2_4404162832_tb_0"
+          "s2_4415501088_tb_0",
+          "s2_4415501472_tb_0"
         ]
       }
     ],
@@ -405,13 +405,13 @@
   {
     "slide_id": 3,
     "text_actions": {
-      "s3_4403940864_tb_0": {
+      "s3_4415503152_tb_0": {
         "original_text": "Student Engagement Benchmark Metrics",
         "action": "KEEP",
         "reason": "Title block is retained to establish slide context and subject.",
         "transformed_text": "Student Engagement Benchmark Metrics"
       },
-      "s3_4403950656_tb_0": {
+      "s3_4415502960_tb_0": {
         "original_text": "Studies show 84% improvement in concept retention when interactive checkpoints and dynamic visual layouts are integrated into lecture slides.",
         "action": "REMOVE",
         "reason": "Boilerplate/decorative layout elements are removed to reduce slide clutter.",
@@ -424,7 +424,7 @@
         "target_opportunity": "Comparison Table",
         "description": "Structured text transformed programmatically into Comparison Table layout.",
         "source_block_ids": [
-          "s3_4403950656_tb_0"
+          "s3_4415502960_tb_0"
         ]
       },
       {
@@ -438,8 +438,8 @@
         "target_opportunity": "AI Image",
         "description": "Generated AI visual prompt to create a supporting illustration for the main topic.",
         "source_block_ids": [
-          "s3_4403940864_tb_0",
-          "s3_4403950656_tb_0"
+          "s3_4415503152_tb_0",
+          "s3_4415502960_tb_0"
         ]
       }
     ],
@@ -520,31 +520,31 @@
   {
     "slide_id": 4,
     "text_actions": {
-      "s4_4403950656_tb_0": {
+      "s4_4415502960_tb_0": {
         "original_text": "Four Pillars of Learnova Architecture",
         "action": "KEEP",
         "reason": "Title block is retained to establish slide context and subject.",
         "transformed_text": "Four Pillars of Learnova Architecture"
       },
-      "s4_4403951664_tb_0": {
+      "s4_4415504160_tb_0": {
         "original_text": "1. AI Visual Engine: Converts plain text to flowcharts and structured cards.",
         "action": "MOVE_TO_VISUAL",
         "reason": "Step-by-step procedural information is moved into a flowchart visual specification.",
         "transformed_text": null
       },
-      "s4_4403951664_tb_1": {
+      "s4_4415504160_tb_1": {
         "original_text": "2. Vision OCR Integration: Reads embedded diagrams and infographic text.",
         "action": "MOVE_TO_VISUAL",
         "reason": "Step-by-step procedural information is moved into a flowchart visual specification.",
         "transformed_text": null
       },
-      "s4_4403951664_tb_2": {
+      "s4_4415504160_tb_2": {
         "original_text": "3. Interleaved Quizzes: Promotes active recall with checkpoint questions.",
         "action": "MOVE_TO_VISUAL",
         "reason": "Step-by-step procedural information is moved into a flowchart visual specification.",
         "transformed_text": null
       },
-      "s4_4403951664_tb_3": {
+      "s4_4415504160_tb_3": {
         "original_text": "4. Multi-Format Export: Native PPTX presentation + 60fps web deck.",
         "action": "MOVE_TO_VISUAL",
         "reason": "Step-by-step procedural information is moved into a flowchart visual specification.",
@@ -557,10 +557,10 @@
         "target_opportunity": "Flowchart",
         "description": "Structured text transformed programmatically into Flowchart layout.",
         "source_block_ids": [
-          "s4_4403951664_tb_0",
-          "s4_4403951664_tb_1",
-          "s4_4403951664_tb_3",
-          "s4_4403951664_tb_2"
+          "s4_4415504160_tb_0",
+          "s4_4415504160_tb_2",
+          "s4_4415504160_tb_1",
+          "s4_4415504160_tb_3"
         ]
       },
       {
@@ -568,8 +568,8 @@
         "target_opportunity": "Comparison Table",
         "description": "Structured text transformed programmatically into Comparison Table layout.",
         "source_block_ids": [
-          "s4_4403951664_tb_0",
-          "s4_4403951664_tb_2"
+          "s4_4415504160_tb_0",
+          "s4_4415504160_tb_2"
         ]
       },
       {
@@ -577,7 +577,7 @@
         "target_opportunity": "Icon Grid",
         "description": "Structured text transformed programmatically into Icon Grid layout.",
         "source_block_ids": [
-          "s4_4403950656_tb_0"
+          "s4_4415502960_tb_0"
         ]
       },
       {
@@ -585,7 +585,7 @@
         "target_opportunity": "SmartArt",
         "description": "Structured text transformed programmatically into SmartArt layout.",
         "source_block_ids": [
-          "s4_4403950656_tb_0"
+          "s4_4415502960_tb_0"
         ]
       },
       {
@@ -593,10 +593,10 @@
         "target_opportunity": "Checklist",
         "description": "Structured text transformed programmatically into Checklist layout.",
         "source_block_ids": [
-          "s4_4403951664_tb_0",
-          "s4_4403951664_tb_1",
-          "s4_4403951664_tb_3",
-          "s4_4403951664_tb_2"
+          "s4_4415504160_tb_0",
+          "s4_4415504160_tb_2",
+          "s4_4415504160_tb_1",
+          "s4_4415504160_tb_3"
         ]
       },
       {
@@ -604,8 +604,8 @@
         "target_opportunity": "AI Image",
         "description": "Generated AI visual prompt to create a supporting illustration for the main topic.",
         "source_block_ids": [
-          "s4_4403950656_tb_0",
-          "s4_4403951664_tb_0"
+          "s4_4415502960_tb_0",
+          "s4_4415504160_tb_0"
         ]
       }
     ],

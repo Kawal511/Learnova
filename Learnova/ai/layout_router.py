@@ -12,8 +12,25 @@ from dotenv import load_dotenv
 from providers import GroqProvider
 from ai.diagram_gen import generate_mermaid_diagram
 from logger import logger
+from typing import Optional
 
 load_dotenv()
+
+# Module-level singleton – avoids creating/destroying httpx connection pools
+# per chunk which was causing macOS segfault (exit 139) in Streamlit.
+_groq_provider: Optional[GroqProvider] = None
+
+
+def _get_groq_provider(timeout: float = 8.0) -> Optional[GroqProvider]:
+    """Return a cached GroqProvider, or None if GROQ_API_KEY is missing."""
+    global _groq_provider
+    if _groq_provider is None:
+        try:
+            _groq_provider = GroqProvider(timeout=timeout)
+        except Exception as e:
+            logger.warning("Could not initialise GroqProvider: %s", e)
+            return None
+    return _groq_provider
 
 SYSTEM_PROMPT = """
 You are a Senior Master Instructional Designer and Educational Content Editor.
@@ -53,7 +70,7 @@ Return ONLY valid JSON matching this exact schema:
 }
 """
 
-_groq_rate_limited = False  # module-level flag; skip API once quota is hit
+_groq_rate_limited = False  # module-level flag; skip API once quota is hit per session
 
 def _heuristic_layout_type(text: str) -> str:
     lower = text.lower()
@@ -85,7 +102,11 @@ def classify_and_structure_chunk(text: str, current_title: str = "") -> dict:
         if _groq_rate_limited:
             raise ValueError("Groq TPM quota previously exhausted; using local fallback")
 
-        provider = GroqProvider(timeout=8.0)
+        # Reuse singleton provider — avoids httpx pool teardown on every chunk
+        provider = _get_groq_provider(timeout=8.0)
+        if provider is None:
+            raise ValueError("GroqProvider not available")
+
         raw_content = None
         try:
             raw_content = provider.generate(
@@ -104,11 +125,14 @@ def classify_and_structure_chunk(text: str, current_title: str = "") -> dict:
                 raise ValueError("rate_limit")  # Triggers heuristic fallback below
             raise e
 
-        if not raw_content:
-            raise ValueError("Failed Groq completion")
-        match = re.search(r"\{.*\}", raw_content, re.DOTALL)
-        if match:
-            raw_content = match.group(0)
+        if not raw_content or not raw_content.strip():
+            raise ValueError("Failed Groq completion: empty response")
+
+        # Extract first JSON object from the response (handles markdown fences)
+        match = re.search(r"\{[\s\S]*\}", raw_content)
+        if not match:
+            raise ValueError("No JSON object found in Groq response")
+        raw_content = match.group(0)
         cleaned = re.sub(r"^```(?:json)?\s*", "", raw_content)
         cleaned = re.sub(r"\s*```$", "", cleaned)
         data = json.loads(cleaned)

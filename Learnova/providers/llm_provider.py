@@ -4,6 +4,9 @@ Contains GroqProvider implementing the LLMProvider interface.
 """
 
 import os
+# Must be set before groq/pydantic import to prevent TimeoutError
+# from Anaconda metadata entry_points scanning
+os.environ.setdefault("PYDANTIC_DISABLE_PLUGINS", "1")
 from typing import Any, Dict, List, Optional
 from groq import Groq
 from providers.provider_base import LLMProvider

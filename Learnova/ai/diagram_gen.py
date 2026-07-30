@@ -10,8 +10,24 @@ import time
 from dotenv import load_dotenv
 from providers import GroqProvider
 from logger import logger
+from typing import Optional
 
 load_dotenv()
+
+# Module-level singleton – reuse one httpx connection pool for all diagram calls.
+_groq_provider: Optional[GroqProvider] = None
+
+
+def _get_groq_provider(timeout: float = 10.0) -> Optional[GroqProvider]:
+    """Return a cached GroqProvider, or None if GROQ_API_KEY is missing."""
+    global _groq_provider
+    if _groq_provider is None:
+        try:
+            _groq_provider = GroqProvider(timeout=timeout)
+        except Exception as e:
+            logger.warning("Could not initialise GroqProvider for diagrams: %s", e)
+            return None
+    return _groq_provider
 
 SYSTEM_PROMPT = (
     "You are an expert educational visual designer. "
@@ -28,7 +44,9 @@ def generate_mermaid_diagram(text: str, title: str = "") -> dict:
     Generate Mermaid.js code for process/workflow text.
     """
     try:
-        provider = GroqProvider(timeout=10.0)
+        provider = _get_groq_provider(timeout=10.0)
+        if provider is None:
+            raise ValueError("GroqProvider not available")
         raw_content = provider.generate(
             prompt=f"Title: {title}\nContent:\n{text}",
             system_prompt=SYSTEM_PROMPT,
@@ -37,9 +55,12 @@ def generate_mermaid_diagram(text: str, title: str = "") -> dict:
             max_tokens=600,
             timeout=10.0,
         )
-        match = re.search(r"\{.*\}", raw_content, re.DOTALL)
-        if match:
-            raw_content = match.group(0)
+        if not raw_content or not raw_content.strip():
+            raise ValueError("Empty Groq response for diagram")
+        match = re.search(r"\{[\s\S]*\}", raw_content)
+        if not match:
+            raise ValueError("No JSON object found in diagram response")
+        raw_content = match.group(0)
         cleaned = re.sub(r"^```(?:json)?\s*", "", raw_content)
         cleaned = re.sub(r"\s*```$", "", cleaned)
         data = json.loads(cleaned)

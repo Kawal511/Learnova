@@ -5,7 +5,6 @@ Contains GeminiEmbeddingProvider implementing the EmbeddingProvider interface.
 
 import os
 from typing import Any, List, Optional
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from providers.provider_base import EmbeddingProvider
 
 
@@ -28,6 +27,10 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY not found in environment variables.")
         self.model_name = model_name
+        
+        # Lazy import to avoid loading gRPC C-libraries at startup. 
+        # This prevents macOS thread conflicts (segfault exit 139) in Streamlit.
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
         self.embeddings = GoogleGenerativeAIEmbeddings(
             model=self.model_name,
             google_api_key=self.api_key,
