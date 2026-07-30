@@ -15,6 +15,9 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["PYDANTIC_DISABLE_PLUGINS"] = "1"
+# macOS: prevent segfault when Objective-C runtime re-initializes in forked process
+os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import sys
 import json
@@ -47,13 +50,20 @@ def _build_html_worker(deck_b64: str, topic_title: str, theme_id: str) -> str:
 if __name__ == "__main__":
     """
     Entry point when called as a subprocess.
-    Args (via stdin JSON):
-      { "mode": "pptx"|"html", "deck_b64": "...", "topic_title": "...", "theme_id": "..." }
-    Output (via stdout):
-      { "result_b64": "...", "error": null }
+    Args (via command line or stdin):
+      sys.argv[1]: path to input JSON file
+      sys.argv[2]: path to output JSON file
     """
+    in_file = sys.argv[1] if len(sys.argv) > 1 else None
+    out_file = sys.argv[2] if len(sys.argv) > 2 else None
+
     try:
-        payload = json.loads(sys.stdin.read())
+        if in_file and os.path.exists(in_file):
+            with open(in_file, "r") as f:
+                payload = json.load(f)
+        else:
+            payload = json.loads(sys.stdin.read())
+
         mode = payload["mode"]
         deck_b64 = payload["deck_b64"]
         topic_title = payload.get("topic_title", "presentation")
@@ -66,10 +76,20 @@ if __name__ == "__main__":
         else:
             raise ValueError(f"Unknown mode: {mode}")
 
-        print(json.dumps({"result_b64": result_b64, "error": None}))
+        out_data = {"result_b64": result_b64, "error": None}
+        if out_file:
+            with open(out_file, "w") as f:
+                json.dump(out_data, f)
+        else:
+            print(json.dumps(out_data))
         sys.exit(0)
 
     except Exception as e:
         import traceback
-        print(json.dumps({"result_b64": None, "error": str(e), "traceback": traceback.format_exc()}))
+        err_data = {"result_b64": None, "error": str(e), "traceback": traceback.format_exc()}
+        if out_file:
+            with open(out_file, "w") as f:
+                json.dump(err_data, f)
+        else:
+            print(json.dumps(err_data))
         sys.exit(1)

@@ -8,7 +8,6 @@ Uses PyMuPDF's full block/dict parsing to extract:
 - Single-page per slide mode and Textbook PDF chapter grouping mode
 """
 
-import fitz  # PyMuPDF >= 1.23 for find_tables
 import io
 import re
 import os
@@ -84,6 +83,7 @@ def _extract_tables_from_page(page) -> List[str]:
     """
     table_texts = []
     try:
+        import fitz
         tabs = page.find_tables()
         for tab in tabs.tables:
             for row in tab.extract():
@@ -178,6 +178,7 @@ def _extract_page_images(page, doc, min_size: int = 120) -> List[dict]:
 def _render_page_as_image(page, dpi: int = 150) -> Optional[dict]:
     """Render a whole PDF page as PNG for Gemini Vision OCR fallback."""
     try:
+        import fitz
         pix = page.get_pixmap(dpi=dpi)
         png_bytes = bytes(pix.tobytes("png"))
         pix = None
@@ -213,6 +214,7 @@ class PDFParser(BaseDocumentParser):
         if not self.validate(file_path):
             raise ValueError(f"Invalid or unsupported PDF file path: {file_path}")
 
+        import fitz
         doc = fitz.open(file_path)
         slides: List[SlidePageEntity] = []
 
@@ -425,6 +427,7 @@ def parse_textbook_pdf(file_path: str) -> ParsedDocument:
     Backward-compatible textbook-mode PDF parser:
     Groups pages by chapter/unit headings and hard-chunks text every 150 words.
     """
+    import fitz
     doc = fitz.open(file_path)
     current_chapter = "Introduction"
     chapter_texts: Dict[str, List[str]] = {}

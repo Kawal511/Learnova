@@ -9,11 +9,28 @@ import os
 import re
 import time
 from dotenv import load_dotenv
-from groq import Groq
+from providers import GroqProvider
 from ai.diagram_gen import generate_mermaid_diagram
 from logger import logger
+from typing import Optional
 
 load_dotenv()
+
+# Module-level singleton – avoids creating/destroying httpx connection pools
+# per chunk which was causing macOS segfault (exit 139) in Streamlit.
+_groq_provider: Optional[GroqProvider] = None
+
+
+def _get_groq_provider(timeout: float = 8.0) -> Optional[GroqProvider]:
+    """Return a cached GroqProvider, or None if GROQ_API_KEY is missing."""
+    global _groq_provider
+    if _groq_provider is None:
+        try:
+            _groq_provider = GroqProvider(timeout=timeout)
+        except Exception as e:
+            logger.warning("Could not initialise GroqProvider: %s", e)
+            return None
+    return _groq_provider
 
 SYSTEM_PROMPT = """
 You are a Senior Master Instructional Designer and Educational Content Editor.
@@ -53,13 +70,7 @@ Return ONLY valid JSON matching this exact schema:
 }
 """
 
-_groq_rate_limited = False  # module-level flag; skip API once quota is hit
-
-def _get_client() -> Groq:
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise ValueError("GROQ_API_KEY not found in environment variables.")
-    return Groq(api_key=api_key, timeout=8.0)
+_groq_rate_limited = False  # module-level flag; skip API once quota is hit per session
 
 def _heuristic_layout_type(text: str) -> str:
     lower = text.lower()
@@ -91,15 +102,17 @@ def classify_and_structure_chunk(text: str, current_title: str = "") -> dict:
         if _groq_rate_limited:
             raise ValueError("Groq TPM quota previously exhausted; using local fallback")
 
-        client = _get_client()
-        completion = None
+        # Reuse singleton provider — avoids httpx pool teardown on every chunk
+        provider = _get_groq_provider(timeout=8.0)
+        if provider is None:
+            raise ValueError("GroqProvider not available")
+
+        raw_content = None
         try:
-            completion = client.chat.completions.create(
+            raw_content = provider.generate(
+                prompt=f"Title: {current_title}\nText:\n{text[:1200]}",
+                system_prompt=SYSTEM_PROMPT,
                 model="llama-3.1-8b-instant",
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Title: {current_title}\nText:\n{text[:1200]}"},
-                ],
                 temperature=0.3,
                 max_tokens=300,
                 timeout=8.0,
@@ -112,13 +125,14 @@ def classify_and_structure_chunk(text: str, current_title: str = "") -> dict:
                 raise ValueError("rate_limit")  # Triggers heuristic fallback below
             raise e
 
-        if not completion or not completion.choices:
-            raise ValueError("Failed Groq completion")
+        if not raw_content or not raw_content.strip():
+            raise ValueError("Failed Groq completion: empty response")
 
-        raw_content = (completion.choices[0].message.content or "").strip()
-        match = re.search(r"\{.*\}", raw_content, re.DOTALL)
-        if match:
-            raw_content = match.group(0)
+        # Extract first JSON object from the response (handles markdown fences)
+        match = re.search(r"\{[\s\S]*\}", raw_content)
+        if not match:
+            raise ValueError("No JSON object found in Groq response")
+        raw_content = match.group(0)
         cleaned = re.sub(r"^```(?:json)?\s*", "", raw_content)
         cleaned = re.sub(r"\s*```$", "", cleaned)
         data = json.loads(cleaned)

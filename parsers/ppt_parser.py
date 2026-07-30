@@ -19,7 +19,6 @@ import hashlib
 from typing import List, Dict, Any, Optional, Set
 from dataclasses import dataclass, field
 from PIL import Image
-import fitz  # PyMuPDF for slide-as-image rendering fallback
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.oxml.ns import qn
@@ -89,6 +88,7 @@ def _slide_as_image(file_path: str, slide_index: int) -> Optional[dict]:
     if not file_path.lower().endswith(".pdf"):
         return None
     try:
+        import fitz
         doc = fitz.open(file_path)
         if slide_index < len(doc):
             page = doc[slide_index]

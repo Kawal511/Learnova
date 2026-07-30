@@ -165,9 +165,9 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{html.escape(topic_title)} – Learnova Interactive Presentation</title>
-    <!-- Reveal.js CSS -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.5.0/reveal.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.5.0/theme/white.min.css">
+    <!-- Reveal.js CSS (pinned stable 4.6.1) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/reveal.min.css" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/theme/white.min.css" crossorigin="anonymous">
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
     <style>
@@ -190,9 +190,10 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
         </div>
     </div>
 
-    <!-- Reveal.js & Mermaid.js CDN -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.5.0/reveal.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <!-- Reveal.js (pinned stable 4.6.1, classic UMD build — NOT ES module) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/reveal.js" crossorigin="anonymous"></script>
+    <!-- Mermaid.js (pinned 10.6.1 – avoids module-import errors) -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
     <script>
         Reveal.initialize({{
             controls: true,

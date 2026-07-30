@@ -12,6 +12,9 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["PYTHONFAULTHANDLER"] = "1"
+# macOS: prevent segfault when forking after loading Objective-C/C-extension libraries
+os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import hashlib
 import tempfile
@@ -127,6 +130,25 @@ div[role="radiogroup"] label {
     font-weight: 600 !important;
 }
 </style>
+<script>
+// Auto-reload on 'Importing a module script failed' — happens when the
+// Streamlit server restarts after a crash and old JS bundle hashes are stale.
+(function() {
+    var _reloaded = sessionStorage.getItem('_lr_reload');
+    window.addEventListener('unhandledrejection', function(event) {
+        var msg = (event.reason && event.reason.message) ? event.reason.message : '';
+        if ((msg.includes('Importing a module script failed') ||
+             msg.includes('Failed to fetch dynamically imported module')) && !_reloaded) {
+            sessionStorage.setItem('_lr_reload', '1');
+            window.location.reload();
+        }
+    });
+    // Clear the flag after a successful load so future crashes also auto-reload.
+    window.addEventListener('load', function() {
+        sessionStorage.removeItem('_lr_reload');
+    });
+})();
+</script>
 """
 st.markdown(custom_css, unsafe_allow_html=True)
 
@@ -368,14 +390,20 @@ if parsed:
                         except Exception as e:
                             logger.warning("Gemini Vision OCR description skipped: %s", e)
 
-                # ── RAG Indexing Step ─────────────────────────────────────────
+                # ── RAG Indexing Step ─────────────────────────────────────
+                retriever = None  # ensure always defined before conditional del
                 with st.spinner("⚡ Building FAISS Vector Index & RAG Context Store..."):
                     try:
                         retriever = ChunkRetriever(chunks)
-                        st.session_state.retriever = retriever
                         logger.info("RAG FAISS index built successfully in app.py")
                     except Exception as e:
                         logger.warning("RAG FAISS indexing skipped: %s", e)
+
+                # Release the retriever immediately — it is only needed for
+                # context storage and holding it past this point risks C-extension
+                # destructor conflicts with Groq/httpx threads in Streamlit.
+                if retriever is not None:
+                    del retriever
 
                 with st.spinner("🤖 Classifying content layouts (Flowcharts, Tables, Metrics)..."):
                     improved = improve_chunks(chunks)
@@ -392,10 +420,10 @@ if parsed:
                     scores = score_all_slides(st.session_state.final_deck)
                     st.session_state.scores = scores
 
-                # Force garbage collection to clean up Groq/httpx C-extension objects
-                # BEFORE spawning subprocesses — prevents macOS SIGSEGV (exit 139)
-                import gc
-                gc.collect()
+                # session_state.retriever was already deleted above after
+                # indexing — no need to delete here (guard for old sessions).
+                if "retriever" in st.session_state:
+                    del st.session_state["retriever"]
 
                 with st.spinner("📦 Building Animated PPTX Deck..."):
                     try:

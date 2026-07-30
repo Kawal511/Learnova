@@ -1,6 +1,11 @@
 """
 Quiz Generator Module for Learnova
 Uses Groq to create MCQ quizzes and interleave checkpoint slides.
+
+IMPORTANT: Do NOT use ThreadPoolExecutor here.
+httpx.Client has internal keepalive connection pool background threads. When a ThreadPoolExecutor
+exits and Python GC destroys the GroqProvider (httpx client), those background threads crash
+macOS with exit code 139 (SIGSEGV). Sequential processing with module-level singleton is safe.
 """
 
 import json
@@ -8,12 +13,12 @@ import os
 import re
 import time
 from dotenv import load_dotenv
-from groq import Groq
+from providers import GroqProvider
 from logger import logger
 
 load_dotenv()
 
-DELAY_BETWEEN_CALLS = 0.3
+DELAY_BETWEEN_CALLS = 0.5
 
 SYSTEM_PROMPT = (
     "You are an educational quiz designer. "
@@ -22,11 +27,19 @@ SYSTEM_PROMPT = (
     '{"question": "...", "options": ["A) ...", "B) ...", "C) ...", "D) ..."], "correct": "A", "explanation": "..."}'
 )
 
-def _get_client() -> Groq:
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise ValueError("GROQ_API_KEY not found in environment variables.")
-    return Groq(api_key=api_key, timeout=10.0)
+# Module-level singleton GroqProvider — created once and reused.
+# Avoids creating/destroying httpx pools which causes macOS segfaults.
+_quiz_provider: GroqProvider | None = None
+
+def _get_quiz_provider() -> GroqProvider | None:
+    global _quiz_provider
+    if _quiz_provider is None:
+        try:
+            _quiz_provider = GroqProvider(timeout=10.0)
+        except Exception as e:
+            logger.warning("Could not initialize Groq client for quizzes: %s", e)
+    return _quiz_provider
+
 
 def _parse_llm_json(raw_response: str) -> dict | None:
     text = raw_response.strip()
@@ -37,19 +50,24 @@ def _parse_llm_json(raw_response: str) -> dict | None:
     except json.JSONDecodeError:
         return None
 
+
 def generate_quizzes(improved_results: list[dict]) -> list[dict]:
     """
     Generate MCQs for improved slides.
+    Sequential execution — safe on macOS with httpx connection pools.
     """
-    try:
-        client = _get_client()
-    except Exception as e:
-        logger.warning("Could not initialize Groq client for quizzes: %s", e)
+    provider = _get_quiz_provider()
+    if not provider:
         return []
+
+    # Group slides into batches of 3
+    batches = []
+    for batch_start in range(0, len(improved_results), 3):
+        batches.append(improved_results[batch_start : batch_start + 3])
+
     quizzes = []
 
-    for batch_start in range(0, len(improved_results), 3):
-        batch = improved_results[batch_start : batch_start + 3]
+    for idx, batch in enumerate(batches):
         combined_parts = []
         source_slides = []
 
@@ -64,21 +82,17 @@ def generate_quizzes(improved_results: list[dict]) -> list[dict]:
         combined_content = "\n\n".join(combined_parts)
 
         try:
-            completion = client.chat.completions.create(
+            raw_content = provider.generate(
+                prompt=f"Content:\n{combined_content}",
+                system_prompt=SYSTEM_PROMPT,
                 model="llama-3.1-8b-instant",
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Content:\n{combined_content}"},
-                ],
                 temperature=0.3,
                 max_tokens=400,
                 timeout=10.0,
             )
-            raw_content = (completion.choices[0].message.content or "").strip()
             parsed = _parse_llm_json(raw_content)
 
             if parsed and "question" in parsed and "options" in parsed:
-                # Normalize correct answer field to single uppercase letter (e.g. "A")
                 raw_correct = str(parsed.get("correct", "A")).strip()
                 match = re.search(r"([A-D])", raw_correct.upper())
                 parsed["correct"] = match.group(1) if match else "A"
@@ -87,11 +101,13 @@ def generate_quizzes(improved_results: list[dict]) -> list[dict]:
         except Exception as e:
             logger.error("Groq quiz call failed: %s", e)
 
-        if batch_start + 3 < len(improved_results):
+        # Small delay between batches to respect TPM limits
+        if idx < len(batches) - 1:
             time.sleep(DELAY_BETWEEN_CALLS)
 
     logger.info("Generated %d quiz(es)", len(quizzes))
     return quizzes
+
 
 def interleave_quizzes_into_slides(improved_results: list[dict], quizzes: list[dict], frequency: int = 4) -> list[dict]:
     """

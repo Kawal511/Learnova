@@ -1,14 +1,25 @@
-"""Gemini Vision image description utilities for Learnova."""
+"""Gemini Vision image description utilities for Learnova.
+
+Strategy:
+  1. Try Gemini Vision API (synchronous, 4s SDK-level timeout).
+  2. On first 429 / RESOURCE_EXHAUSTED, set module-level _quota_exceeded flag.
+  3. All subsequent images skip Gemini and go straight to local Tesseract OCR.
+
+NO ThreadPoolExecutor — zombie background threads from shutdown(wait=False)
+keep live google.genai gRPC connections open which crash macOS during GC (exit 139).
+"""
 
 import base64
 import os
+import subprocess
+import tempfile
+import time
+from typing import Optional
+
 os.environ["PYDANTIC_DISABLE_PLUGINS"] = "1"
 
-import time
-
-from google import genai
 from dotenv import load_dotenv
-
+from providers import GeminiVisionProvider
 from logger import logger
 
 load_dotenv()
@@ -17,9 +28,15 @@ IMAGE_PROMPT = (
     "You are an expert OCR and Educational Visual Content Transcriber.\n"
     "1. EXTRACT AND TRANSCRIBE ALL TEXT, LABELS, CAPTIONS, HEADINGS, NUMBERS, AND TABLES VISIBLE IN THIS IMAGE WORD-FOR-WORD.\n"
     "2. IF THIS IMAGE IS A DIAGRAM, FLOWCHART, ARCHITECTURE, OR INFOGRAPHIC, DESCRIBE EVERY NODE, STEP, ARROW, RELATIONSHIP, AND CONNECTED CONCEPT IN DETAIL.\n"
-    "3. RETURN A STRUCTURED TEXT TRANSCRIPTION THAT CONTAINS ALL KNOWLEDGE AND TEXT FROM THE IMAGE SO IT CAN BE USED FOR EDUCATIONAL SLIDES."
+    "3. IF THERE IS HANDWRITTEN TEXT, TRANSCRIBE IT VERBATIM.\n"
+    "4. RETURN A STRUCTURED TEXT TRANSCRIPTION THAT CONTAINS ALL KNOWLEDGE AND TEXT FROM THE IMAGE SO IT CAN BE USED FOR EDUCATIONAL SLIDES."
 )
-DELAY_BETWEEN_CALLS = 0.5
+DELAY_BETWEEN_CALLS = 0.3
+
+# ── Module-level quota flag ───────────────────────────────────────────────────
+# Set to True on the first 429 / quota error so all remaining images skip
+# Gemini immediately and fall back to local Tesseract OCR.
+_gemini_quota_exceeded: bool = False
 
 
 def _mime_from_ext(ext: str) -> str:
@@ -35,98 +52,117 @@ def _mime_from_ext(ext: str) -> str:
     return "image/png"
 
 
+def local_tesseract_ocr(image_bytes: bytes) -> Optional[str]:
+    """
+    Perform local OCR using tesseract CLI.
+    Handles printed text, handwritten notes, diagrams, and tables.
+    """
+    try:
+        tess_bin = "tesseract"
+        if os.path.exists("/opt/homebrew/bin/tesseract"):
+            tess_bin = "/opt/homebrew/bin/tesseract"
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            tmp.write(image_bytes)
+            tmp_path = tmp.name
+
+        try:
+            result = subprocess.run(
+                [tess_bin, tmp_path, "stdout", "--psm", "6"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode == 0:
+                text = result.stdout.strip()
+                if text:
+                    return f"[OCR Transcription (Local):\n{text}]"
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+    except Exception as e:
+        logger.warning("Local tesseract OCR fallback failed: %s", e)
+    return None
+
+
 def describe_images(images: list[dict]) -> list[dict]:
-    """Describe page images with Gemini Vision.
+    """Describe page images with Gemini Vision, falling back to local Tesseract OCR.
+
+    Uses a module-level quota flag: the moment Gemini returns a 429, ALL
+    remaining images instantly use Tesseract — no retries, no background threads.
 
     Args:
-        images: List like [{"index": 0, "bytes": b"...", "ext": "png", "base64": "..."}, ...]
+        images: List like [{"index": 0, "bytes": b"...", "ext": "png"}, ...]
 
     Returns:
         List like [{"index": 0, "description": "...", "bytes": b"..."}, ...]
     """
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        logger.warning("GEMINI_API_KEY missing; skipping image descriptions")
-        return []
+    global _gemini_quota_exceeded
 
-    try:
-        client = genai.Client(api_key=api_key)
-    except Exception as e:
-        logger.warning("Could not initialize Gemini Client: %s", e)
-        return []
+    # Try to create the provider once; if it fails (bad key, no env var), use local OCR only.
+    provider: Optional[GeminiVisionProvider] = None
+    if not _gemini_quota_exceeded:
+        try:
+            provider = GeminiVisionProvider()
+        except Exception as e:
+            logger.warning("Could not initialize Gemini Vision client: %s — using Tesseract OCR only.", e)
 
     described_images = []
     total = len(images or [])
-    quota_exceeded = False
 
     for idx, image in enumerate(images or []):
-        if quota_exceeded:
-            break
+        image_bytes = image.get("bytes")
+        if not image_bytes and image.get("base64"):
+            image_bytes = base64.b64decode(image.get("base64"))
+        if not image_bytes:
+            continue
 
-        try:
-            image_bytes = image.get("bytes")
-            if not image_bytes and image.get("base64"):
-                image_bytes = base64.b64decode(image.get("base64"))
-            if not image_bytes:
-                continue
+        description: Optional[str] = None
 
-            import io
-            from PIL import Image
+        # ── 1. Gemini Vision (synchronous, SDK has 4s HTTP timeout) ──────────
+        if provider and not _gemini_quota_exceeded:
             try:
-                pil_img = Image.open(io.BytesIO(image_bytes))
+                description = provider.describe_image(
+                    image_bytes=image_bytes,
+                    prompt=IMAGE_PROMPT,
+                    models_to_try=["gemini-2.0-flash"],
+                    max_retries=1,
+                )
             except Exception as e:
-                logger.warning(f"Could not open image with PIL: {e}")
-                continue
+                err_str = str(e)
+                if (
+                    "Quota exceeded" in err_str
+                    or "RESOURCE_EXHAUSTED" in err_str
+                    or "429" in err_str
+                    or "timed out" in err_str.lower()
+                    or "timeout" in err_str.lower()
+                ):
+                    _gemini_quota_exceeded = True
+                    logger.warning(
+                        "Gemini Vision quota/timeout hit for image %s; "
+                        "switching ALL remaining images to local Tesseract OCR.",
+                        image.get("index", idx),
+                    )
+                else:
+                    logger.warning("Gemini Vision OCR failed for image %s: %s", image.get("index", idx), e)
 
-            max_retries = 2
-            response = None
+        # ── 2. Local Tesseract OCR fallback ─────────────────────────────────
+        if not description:
+            logger.info("Running local Tesseract OCR for image %s...", image.get("index", idx))
+            description = local_tesseract_ocr(image_bytes)
 
-            # Models to try in priority order
-            models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
+        if description:
+            described_images.append({
+                "index": image.get("index", idx),
+                "description": description,
+                "bytes": image_bytes,
+            })
 
-            for model_name in models_to_try:
-                if response:
-                    break
-                for attempt in range(max_retries):
-                    try:
-                        response = client.models.generate_content(
-                            model=model_name,
-                            contents=[
-                                IMAGE_PROMPT,
-                                pil_img,
-                            ]
-                        )
-                        if response and getattr(response, "text", None):
-                            break
-                    except Exception as e:
-                        err_str = str(e)
-                        if "RESOURCE_EXHAUSTED" in err_str or "Quota exceeded" in err_str:
-                            logger.warning(
-                                "Gemini Vision API quota limit reached on model %s: %s", model_name, err_str
-                            )
-                            if model_name == models_to_try[-1]:
-                                quota_exceeded = True
-                            break  # Try next model or stop
-                        elif "503" in err_str or "429" in err_str:
-                            time.sleep(1.5 * (attempt + 1))
-                        else:
-                            break  # non-retryable error for this model
-
-            if not response:
-                logger.warning("Could not describe image %s; skipping", image.get("index", idx))
-                continue
-
-            description = (getattr(response, "text", "") or "").strip()
-            if description:
-                described_images.append({
-                    "index": image.get("index", idx),
-                    "description": description,
-                    "bytes": image_bytes,
-                })
-        except Exception as e:
-            logger.warning("Image description skipped for image %s: %s", image.get("index", idx), e)
-
-        if idx < total - 1 and not quota_exceeded:
+        # Only sleep between calls when Gemini is actually being used
+        if idx < total - 1 and provider and not _gemini_quota_exceeded:
             time.sleep(DELAY_BETWEEN_CALLS)
 
     return described_images
