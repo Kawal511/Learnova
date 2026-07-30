@@ -190,10 +190,10 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
         </div>
     </div>
 
-    <!-- Reveal.js (pinned stable 4.6.1, classic UMD build — NOT ES module) -->
+    <!-- Reveal.js (pinned stable 4.6.1, classic UMD build) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/reveal.js" crossorigin="anonymous"></script>
-    <!-- Mermaid.js (pinned 10.6.1 – avoids module-import errors) -->
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
+    <!-- Mermaid.js (cdnjs UMD standalone build – works in local file:// and data URIs) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.6.1/mermaid.min.js" crossorigin="anonymous"></script>
     <script>
         Reveal.initialize({{
             controls: true,

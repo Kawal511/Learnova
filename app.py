@@ -534,10 +534,18 @@ if st.session_state.final_deck:
                 )
 
                 if l_type == "FLOWCHART" and "mermaid_code" in imp:
-                    st.markdown("```mermaid\n" + imp["mermaid_code"] + "\n```")
-                    st.markdown("**Flow Steps:**")
-                    for b in imp.get("bullets", []):
-                        st.markdown(f"- {b}")
+                    m_code = imp["mermaid_code"]
+                    # Render visual flowchart pills
+                    st.markdown("**🔄 Process / Flowchart Sequence:**")
+                    steps = imp.get("bullets", [])
+                    if steps:
+                        flow_html = " &nbsp;➔&nbsp; ".join(
+                            f"<span style='background:#17a2b8; color:#fff; padding:4px 10px; border-radius:12px; font-weight:600;'>{s}</span>"
+                            for s in steps
+                        )
+                        st.markdown(f"<div style='margin-bottom:12px;'>{flow_html}</div>", unsafe_allow_html=True)
+                    with st.expander("📐 View Diagram Definition"):
+                        st.code(m_code, language="text")
 
                 elif l_type == "TABLE" and "table_headers" in imp:
                     headers = imp.get("table_headers", [])
