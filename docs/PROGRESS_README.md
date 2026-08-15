@@ -53,9 +53,28 @@
 
 ### ⚡ Day 8 – Current Progress & Thread-Safe Architecture
 - Integrated interactive Web Decks (`Reveal.js` + `Mermaid.js`) and PowerPoint OpenXML transition animation engine.
-- Implemented thread-safe subprocess execution (`utils/subprocess_builder.py` + `utils/build_worker.py`) to isolate PPTX and HTML compilation, resolving macOS C-extension memory conflicts.
+- Implemented thread-safe subprocess execution (`rendering/subprocess_builder.py` + `rendering/build_worker.py`) to isolate PPTX and HTML compilation, resolving macOS C-extension memory conflicts.
 - Built instant fallback from Gemini Vision OCR to local Tesseract OCR on API 429 quota exhaustion.
 - Automated MCQ quiz generation (`ai/quiz_gen.py`) and interleaved knowledge check slides into presentations.
+
+### 🧱 Day 9 – Architecture Restructure & Multi-Frontend
+
+- Moved the codebase to a `src/learnova/` package layout; the library now imports
+  **no UI framework at all**. Entry points live under `apps/`.
+- Extracted the 8-stage pipeline out of the 706-line `app.py` into
+  `learnova/pipeline/orchestrator.py`, so Streamlit, FastAPI and the tests all
+  drive one code path.
+- Introduced a **Markdown intermediate representation**: PPTX, PDF and typed
+  syllabus input all converge on markdown, which the user can edit before
+  generation. Chunking now happens on `##` heading boundaries instead of
+  fixed-size word windows.
+- Added `NvidiaProvider` (NVIDIA NIM over plain REST — no `openai` package) and
+  `LLMRouter`, which fails over between providers on 429 / timeout / 5xx.
+- Added a **FastAPI backend** with an async job store, and a **React + Vite
+  frontend** that polls stage progress and offers an editable markdown pane.
+- Removed duplicated `SlideData` / `ParsedDocument` definitions, corrected the
+  false "FAISS index" claims (retrieval is keyword-based), and fixed
+  `generate_sample.py`, which had a hardcoded macOS path and a missing function.
 
 ---
 
@@ -70,12 +89,68 @@
 | **Content Summarization & Transformation** | ✅ Complete |
 | **Thread-Safe Subprocess PPTX/HTML Builders** | ✅ Complete |
 | **Interleaved Quiz Checkpoints** | ✅ Complete |
-| **Automatic Slide Generation & Visual Synthesis** | 🔄 In Progress |
+| **UI-Agnostic Pipeline Orchestrator** | ✅ Complete |
+| **Markdown Intermediate Representation** | ✅ Complete |
+| **Multi-Provider Failover (Groq / NVIDIA)** | ✅ Complete |
+| **FastAPI Backend + React Frontend** | ✅ Complete |
+| **AnyDoc Markdown Conversion + Image Anchoring** | ✅ Complete |
+| **Deterministic Visual Planning (flowchart/table/KPI)** | ✅ Complete |
+| **Automatic Slide Generation & Visual Synthesis** | ✅ Complete |
+| **Wiring `intelligence/` + `visual_specs/` into runtime** | ✅ Complete |
+| **Wiring `enhancement/` into runtime** | ✅ Complete |
+| **Text density (low/medium/heavy) + slide continuity** | ✅ Complete |
+| **Activating LLMRouter / NVIDIA failover in the AI modules** | ⬜ Not started |
+
+---
+
+### 🖼️ Day 10 – AnyDoc, Image Anchoring & Visual Synthesis
+
+- Adopted **AnyDoc** (`firecrawl-anydoc`) as the primary markdown converter. It
+  ships an `abi3` wheel, so it installs on CPython 3.10+ including 3.13 on
+  Windows. The native parsers remain the fallback and the only OCR path.
+- Split responsibilities: AnyDoc supplies **text**, the native parsers supply
+  **image bytes** (AnyDoc has no document model for PDF, and markdown cannot
+  carry bytes anyway).
+- Built **image anchoring** — each extracted image is matched back to the
+  markdown section that discusses it by exact heading, then word-overlap
+  similarity, then position. Verified to survive section deletion *and*
+  reordering, which a positional mapping cannot.
+- Images on non-`MINIMAL_TEXT` layouts now get their **own figure slide**
+  directly after the slide they belong to, instead of being silently dropped.
+- Added `pipeline/visual_planner.py`, which finally puts `intelligence/` and
+  `visual_specs/` to work: ordered steps become **real flowcharts** (proper
+  nodes, edges, start/end shapes, generated Mermaid), statistics become metric
+  callouts with the actual figure, comparisons become tables. This is what
+  gives a **typed syllabus** visual structure despite having no images.
+- Fixed three bugs found along the way: the chunker attached a unit's image to
+  *every* one of its chunks (producing duplicate figure slides); AnyDoc's bare
+  `image.png` placeholder lines became junk slides; and the flowchart fallback
+  emitted a hardcoded three-node placeholder instead of the real steps.
+
+---
+
+### 📐 Day 11 – Density, Continuity & Enhancement
+
+- Wired `enhancement/` into the pipeline via `pipeline/enhancer.py`, which
+  rebuilds the `SlideIntelligence` + `TransformationPlan` pair the engine needs.
+  It is skipped at low density, capped at 12 slides, and degrades to plain
+  content when no provider is configured.
+- Added **text density** (`low` / `medium` / `heavy`) driving bullet counts,
+  word budgets, table rows, flowchart steps and enhancement volume.
+- Added **slide continuity**: overflow paginates onto numbered continuation
+  slides (`Topic (2/3)`) instead of being truncated. Takeaway appears only on
+  the final part; the figure only on the first. `METRIC` and `QUIZ` are atomic.
+- Fixed a content-loss bug: the layout router's fallback capped bullets at five,
+  deleting user content before the density stage could paginate it.
+- Documented every creation rule in `docs/PPT_RULES.md`.
+- Landing page: hover/focus motion on all buttons and cards, and **all emoji
+  removed** app-wide (replaced with numbered marks and CSS rules).
 
 ---
 
 ## 🎯 Next Milestones
 
-1. **AI-Powered Automatic Visual Selection**: Enhance model-driven layout routing for complex multi-modal slides.
-2. **Professional Presentation Redesign**: Expand auto-detected design themes and custom CSS layout presets.
-3. **End-to-End Bulk Generation**: Seamless multi-document batch processing with downloadable PPTX and Web Decks.
+1. **Activate `LLMRouter`** in the four AI modules that currently construct
+   `GroqProvider()` directly, so NVIDIA failover actually takes effect.
+2. **Persistent job store**: the current one is in-memory and single-process.
+3. **End-to-End Bulk Generation**: multi-document batch processing.

@@ -1,0 +1,464 @@
+"""
+Markdown intermediate representation.
+
+Every input route — PPTX, PDF, or a typed syllabus — converges on one markdown
+document, so downstream stages reason over a single shape.
+
+Conversion strategy
+-------------------
+**Text** comes from AnyDoc (``firecrawl-anydoc``) when it is installed: it is
+pure Rust, needs no model or API key, and produces cleaner heading/list
+structure than flattening our own parser output. The native parsers are the
+fallback, and remain the only path that handles scanned pages.
+
+**Images** never come from AnyDoc's markdown, because markdown cannot carry
+bytes and AnyDoc exposes no document model for PDF at all. They are always
+extracted by the native parsers, which know the slide/page each image came
+from, and are then *anchored* back onto the markdown section they belong to
+(see ``anchor_assets``). That is what keeps an image next to the text that
+discusses it rather than dumped at the end of the deck.
+
+Results are cached on disk by file content hash.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import pathlib
+import re
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
+
+from learnova.config import CACHE_DIR
+from learnova.logging_config import logger
+
+# Below this many characters we assume the document is scanned/image-only and
+# defer to the native parser, which can OCR and extract images.
+_MIN_ANYDOC_CHARS = 200
+
+_STOPWORDS = {
+    "the", "a", "an", "and", "or", "of", "to", "in", "for", "on", "with", "is",
+    "are", "was", "were", "be", "by", "as", "at", "from", "that", "this", "it",
+    "its", "into", "than", "then", "but", "not", "can", "will", "step",
+}
+
+
+@dataclass
+class MarkdownDocument:
+    """The markdown IR plus the binary assets markdown cannot carry."""
+
+    markdown: str
+    source_name: str
+    source_type: str            # "pptx" | "pdf" | "typed"
+    converter: str              # "anydoc" | "native" | "anydoc+native-assets" | "typed"
+    assets: List[dict] = field(default_factory=list)
+    meta: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {
+            "markdown": self.markdown,
+            "source_name": self.source_name,
+            "source_type": self.source_type,
+            "converter": self.converter,
+            "asset_count": len(self.assets),
+            "meta": self.meta,
+        }
+
+
+# ── Section splitting ─────────────────────────────────────────────────────────
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+
+
+def split_sections(markdown: str, max_level: int = 2) -> List[Dict[str, Any]]:
+    """
+    Split markdown on headings of ``max_level`` or shallower.
+
+    This is what makes chunking semantic instead of arbitrary: a textbook
+    structured as ``## CHAPTER 1`` / ``## CHAPTER 2`` yields one section per
+    chapter rather than fixed-size word windows that cut mid-sentence.
+    """
+    sections: List[Dict[str, Any]] = []
+    current = {"title": "", "level": 0, "body": []}
+
+    for line in markdown.splitlines():
+        match = _HEADING_RE.match(line.strip())
+        if match and len(match.group(1)) <= max_level:
+            if current["title"] or any(l.strip() for l in current["body"]):
+                sections.append(current)
+            current = {
+                "title": match.group(2).strip(),
+                "level": len(match.group(1)),
+                "body": [],
+            }
+        else:
+            current["body"].append(line)
+
+    if current["title"] or any(l.strip() for l in current["body"]):
+        sections.append(current)
+
+    return [
+        {
+            "title": s["title"],
+            "level": s["level"],
+            "text": "\n".join(s["body"]).strip(),
+        }
+        for s in sections
+    ]
+
+
+def sections_to_parsed_dicts(sections: List[Dict[str, Any]]) -> List[dict]:
+    """Adapt markdown sections to the dict shape the chunker already consumes."""
+    out: List[dict] = []
+    for i, section in enumerate(sections):
+        body = section["text"]
+        out.append(
+            {
+                "id": i,
+                "slide": i + 1,
+                "page": i + 1,
+                "title": section["title"] or f"Section {i + 1}",
+                "content": [ln for ln in body.splitlines() if ln.strip()],
+                "text": body,
+            }
+        )
+    return out
+
+
+# ── Image anchoring ───────────────────────────────────────────────────────────
+def _significant_words(text: str) -> set:
+    words = re.findall(r"[a-z0-9]+", (text or "").lower())
+    return {w for w in words if len(w) > 3 and w not in _STOPWORDS}
+
+
+def _similarity(a: str, b: str) -> float:
+    """Jaccard-ish overlap between two texts, biased toward the shorter one."""
+    wa, wb = _significant_words(a), _significant_words(b)
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / min(len(wa), len(wb))
+
+
+def anchor_assets(
+    sections: List[Dict[str, Any]],
+    assets: List[dict],
+) -> List[Tuple[int, dict]]:
+    """
+    Decide which markdown section each extracted image belongs to.
+
+    An image carries the title and text of the slide/page it was pulled from.
+    We match that against the sections in three escalating steps:
+
+    1. **Exact title match** — the strongest signal, and the common case for
+       PPTX where one slide becomes one ``##`` section.
+    2. **Text similarity** — word overlap between the image's source text and
+       the section body. Survives heading rewrites and reordering.
+    3. **Positional fallback** — the section at the same ordinal index.
+
+    Returns ``(section_index, asset)`` pairs. Without this, images end up
+    attached to whichever section happens to share their list position, which
+    is wrong the moment the two documents differ in length.
+    """
+    if not sections or not assets:
+        return []
+
+    normalized_titles = [(s.get("title") or "").strip().lower() for s in sections]
+    anchored: List[Tuple[int, dict]] = []
+
+    for asset in assets:
+        source_title = (asset.get("unit_title") or "").strip().lower()
+        source_text = asset.get("unit_text") or ""
+        chosen: Optional[int] = None
+
+        # 1. exact title match
+        if source_title and source_title in normalized_titles:
+            chosen = normalized_titles.index(source_title)
+
+        # 2. best text similarity
+        if chosen is None and source_text:
+            scored = [
+                (_similarity(source_text, f"{s.get('title','')} {s.get('text','')}"), i)
+                for i, s in enumerate(sections)
+            ]
+            best_score, best_index = max(scored, key=lambda pair: pair[0])
+            if best_score >= 0.25:
+                chosen = best_index
+
+        # 3. positional fallback
+        if chosen is None:
+            unit_index = asset.get("unit_index")
+            if isinstance(unit_index, int) and 0 <= unit_index < len(sections):
+                chosen = unit_index
+            else:
+                chosen = 0
+
+        anchored.append((chosen, asset))
+        logger.debug(
+            "anchored asset from %r -> section %d (%r)",
+            source_title or "?", chosen, sections[chosen].get("title"),
+        )
+
+    return anchored
+
+
+def attach_assets_to_units(
+    parsed_units: List[dict],
+    sections: List[Dict[str, Any]],
+    assets: List[dict],
+) -> int:
+    """
+    Attach anchored images onto the parsed unit dicts the chunker consumes.
+
+    The first image for a section becomes ``unit["image"]`` (what the renderers
+    read); any extras are kept in ``unit["images"]`` so nothing is silently
+    dropped.
+    """
+    attached = 0
+    for section_index, asset in anchor_assets(sections, assets):
+        if not (0 <= section_index < len(parsed_units)):
+            continue
+        unit = parsed_units[section_index]
+        unit.setdefault("images", []).append(asset)
+        if "image" not in unit:
+            unit["image"] = asset
+        attached += 1
+    return attached
+
+
+# ── Caching ───────────────────────────────────────────────────────────────────
+def _cache_path(file_bytes: bytes, suffix: str) -> pathlib.Path:
+    digest = hashlib.sha256(file_bytes).hexdigest()[:32]
+    return CACHE_DIR / f"md_{digest}{suffix}.md"
+
+
+# ── Converters ────────────────────────────────────────────────────────────────
+def anydoc_available() -> bool:
+    try:
+        import anydoc  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+# AnyDoc represents an embedded picture as a bare filename line ("image.png")
+# or markdown image syntax. We extract real image bytes natively, so these
+# placeholders are noise — left in, each one becomes its own junk slide.
+_IMAGE_EXTS = r"png|jpe?g|gif|bmp|tiff?|webp|emf|wmf|svg"
+_BARE_IMAGE_LINE_RE = re.compile(rf"^\s*[\w\-. ]+\.(?:{_IMAGE_EXTS})\s*$", re.I)
+_MD_IMAGE_LINE_RE = re.compile(r"^\s*!\[[^\]]*\]\([^)]*\)\s*$")
+
+
+def strip_asset_placeholders(markdown: str) -> str:
+    """Drop image-placeholder lines, then collapse the blank runs they leave."""
+    kept = [
+        line
+        for line in markdown.splitlines()
+        if not (_BARE_IMAGE_LINE_RE.match(line) or _MD_IMAGE_LINE_RE.match(line))
+    ]
+    cleaned = "\n".join(kept)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
+def _convert_with_anydoc(path: str) -> Optional[str]:
+    """Try AnyDoc for text. Returns None when unavailable or unhelpful."""
+    try:
+        import anydoc
+    except ImportError:
+        logger.info("AnyDoc not installed — using native parser for text.")
+        return None
+
+    try:
+        markdown = anydoc.to_markdown(path)
+    except Exception as exc:
+        logger.warning("AnyDoc conversion failed (%s) — using native parser.", exc)
+        return None
+
+    markdown = strip_asset_placeholders(markdown or "")
+
+    if len(markdown) < _MIN_ANYDOC_CHARS:
+        logger.info(
+            "AnyDoc produced %d chars — likely scanned; using native parser for OCR.",
+            len(markdown),
+        )
+        return None
+
+    return markdown
+
+
+def _extract_native_assets(path: str, ext: str, textbook_mode: bool) -> List[dict]:
+    """
+    Pull images out with the native parsers, tagging each with the slide/page
+    it came from so it can be anchored back to the right markdown section.
+    """
+    from learnova.parsers.pdf_parser import parse_pdf, parse_textbook_pdf
+    from learnova.parsers.ppt_parser import parse_ppt
+
+    try:
+        if ext == ".pptx":
+            document = parse_ppt(path)
+        elif textbook_mode:
+            document = parse_textbook_pdf(path)
+        else:
+            document = parse_pdf(path)
+    except Exception as exc:
+        logger.warning("native asset extraction failed (%s) — continuing without images.", exc)
+        return []
+
+    assets: List[dict] = []
+    seen: set = set()
+
+    for unit in document.slide_units:
+        candidates = list(getattr(unit, "images", []) or [])
+        if unit.image:
+            candidates.insert(0, unit.image)
+
+        for image in candidates:
+            data = image.get("bytes") if isinstance(image, dict) else None
+            if not data:
+                continue
+            digest = hashlib.sha256(data).hexdigest()
+            if digest in seen:
+                continue
+            seen.add(digest)
+            assets.append(
+                {
+                    "index": len(assets),
+                    "bytes": data,
+                    "ext": image.get("ext", "png"),
+                    "unit_index": unit.id,
+                    "unit_title": unit.title or "",
+                    "unit_text": unit.text or "",
+                }
+            )
+
+    logger.info("extracted %d unique image asset(s) natively", len(assets))
+    return assets
+
+
+def _native_to_markdown(path: str, ext: str, textbook_mode: bool = False):
+    """Convert via the existing parsers, flattening their output to markdown."""
+    from learnova.parsers.pdf_parser import parse_pdf, parse_textbook_pdf
+    from learnova.parsers.ppt_parser import parse_ppt
+
+    if ext == ".pptx":
+        document = parse_ppt(path)
+    elif textbook_mode:
+        document = parse_textbook_pdf(path)
+    else:
+        document = parse_pdf(path)
+
+    lines: List[str] = []
+    for unit in document.slide_units:
+        title = (unit.title or "").strip() or f"Section {unit.id + 1}"
+        lines.append(f"## {title}")
+        lines.append("")
+
+        body = (unit.text or "").strip()
+        if body and body != "(No readable text on this slide)":
+            for raw in body.splitlines():
+                stripped = raw.strip()
+                if not stripped or stripped == "[TABLE DATA]":
+                    continue
+                if stripped.startswith("## "):
+                    lines.append(f"### {stripped[3:]}")
+                elif " | " in stripped:
+                    lines.append(f"| {stripped} |")
+                else:
+                    lines.append(f"- {stripped}")
+            lines.append("")
+
+    return "\n".join(lines).strip(), document
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+def convert_to_markdown(
+    path: str,
+    source_name: Optional[str] = None,
+    textbook_mode: bool = False,
+    use_cache: bool = True,
+    prefer_anydoc: bool = True,
+    extract_images: bool = True,
+) -> MarkdownDocument:
+    """
+    Convert a PPTX or PDF into the markdown IR.
+
+    Text prefers AnyDoc; images always come from the native parsers, because
+    AnyDoc exposes no document model for PDF and markdown cannot carry bytes.
+    """
+    file_path = pathlib.Path(path)
+    ext = file_path.suffix.lower()
+    name = source_name or file_path.name
+
+    file_bytes = file_path.read_bytes()
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_file = _cache_path(file_bytes, "_tb" if textbook_mode else "")
+
+    # Images are expensive to re-extract but cannot be cached as text, so the
+    # cache only short-circuits the text half.
+    cached_markdown = None
+    if use_cache and cache_file.exists():
+        cached_markdown = cache_file.read_text(encoding="utf-8")
+        logger.info("markdown cache hit for %s", name)
+
+    assets: List[dict] = []
+    if extract_images:
+        assets = _extract_native_assets(str(file_path), ext, textbook_mode)
+
+    if cached_markdown:
+        return MarkdownDocument(
+            markdown=cached_markdown,
+            source_name=name,
+            source_type=ext.lstrip("."),
+            converter="cache",
+            assets=assets,
+        )
+
+    if prefer_anydoc:
+        markdown = _convert_with_anydoc(str(file_path))
+        if markdown:
+            if use_cache:
+                cache_file.write_text(markdown, encoding="utf-8")
+            return MarkdownDocument(
+                markdown=markdown,
+                source_name=name,
+                source_type=ext.lstrip("."),
+                converter="anydoc+native-assets" if assets else "anydoc",
+                assets=assets,
+                meta={"asset_count": len(assets)},
+            )
+
+    markdown, document = _native_to_markdown(str(file_path), ext, textbook_mode)
+    if use_cache and markdown:
+        cache_file.write_text(markdown, encoding="utf-8")
+    return MarkdownDocument(
+        markdown=markdown,
+        source_name=name,
+        source_type=ext.lstrip("."),
+        converter="native",
+        assets=assets,
+        meta={"unit_count": len(document.slide_units), "asset_count": len(assets)},
+    )
+
+
+def from_typed_text(text: str, source_name: str = "Typed Input") -> MarkdownDocument:
+    """Wrap user-typed content (a syllabus, an outline) as the markdown IR."""
+    stripped = text.strip()
+    if not any(_HEADING_RE.match(l.strip()) for l in stripped.splitlines()):
+        stripped = f"## {source_name}\n\n{stripped}"
+    return MarkdownDocument(
+        markdown=stripped,
+        source_name=source_name,
+        source_type="typed",
+        converter="typed",
+    )
+
+
+__all__ = [
+    "MarkdownDocument",
+    "convert_to_markdown",
+    "from_typed_text",
+    "split_sections",
+    "sections_to_parsed_dicts",
+    "anchor_assets",
+    "attach_assets_to_units",
+    "anydoc_available",
+]

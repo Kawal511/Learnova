@@ -12,15 +12,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from parsers.schema import SlidePageEntity, TextBlockElement, EquationElement
-from intelligence.engine import SlideIntelligenceEngine
-from intelligence.schema import SlideIntelligence
-from intelligence.transformation import SlideTransformationEngine, TransformationPlan
-from providers.provider_base import LLMProvider
-from enhancement.schema import EnhancedSlide
-from enhancement.engine import ContentEnhancementEngine
+from learnova.parsers.schema import SlidePageEntity, TextBlockElement, EquationElement
+from learnova.intelligence.engine import SlideIntelligenceEngine
+from learnova.intelligence.schema import SlideIntelligence
+from learnova.intelligence.transformation import SlideTransformationEngine, TransformationPlan
+from learnova.providers.base import LLMProvider
+from learnova.enhancement.schema import EnhancedSlide
+from learnova.enhancement.engine import ContentEnhancementEngine
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -306,7 +305,7 @@ class TestContentEnhancementEngineLive:
         reason="GROQ_API_KEY not set",
     )
     def test_live_enhance_photosynthesis(self, slide_intel, transformation_plan):
-        from providers.llm_provider import GroqProvider
+        from learnova.providers.groq_provider import GroqProvider
         llm = GroqProvider()
         engine = ContentEnhancementEngine(llm, delay=0.5)
         result = engine.enhance(

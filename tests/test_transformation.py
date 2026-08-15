@@ -7,20 +7,19 @@ import os
 import sys
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from parsers.schema import (
+from learnova.parsers.schema import (
     SlidePageEntity,
     TextBlockElement,
     EquationElement,
 )
-from intelligence.schema import (
+from learnova.intelligence.schema import (
     SlideIntelligence,
     TextPriority,
     VisualOpportunityType,
 )
-from intelligence.engine import SlideIntelligenceEngine
-from intelligence.transformation import (
+from learnova.intelligence.engine import SlideIntelligenceEngine
+from learnova.intelligence.transformation import (
     SlideTransformationEngine,
     TransformationPlan,
     TextActionType,

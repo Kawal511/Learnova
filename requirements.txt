@@ -1,10 +1,35 @@
-streamlit==1.41.1
+# Core pipeline (always required)
 python-pptx==1.0.2
 PyMuPDF==1.25.3
 python-dotenv==1.0.1
-google-genai>=1.0.0
 Pillow>=10.0.0
-altair>=5.0.0
-pandas>=2.0.0
-langchain-google-genai>=2.0.0
+requests>=2.31.0
+
+# Primary markdown converter (pure Rust, no model, no API key).
+# Ships an abi3 wheel, so it installs on CPython 3.10+ including 3.13.
+# If it is ever unavailable the native PyMuPDF/python-pptx parsers take over
+# automatically, so the pipeline still runs without it.
+firecrawl-anydoc>=0.1.9
+
+# LLM / vision providers
 groq>=0.11.0
+google-genai>=1.0.0
+
+# Streamlit frontend
+streamlit==1.41.1
+pandas>=2.0.0
+altair>=5.0.0
+
+# FastAPI backend (serves the React frontend)
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+
+# Tests
+pytest>=8.0.0
+
+# ── Optional ──────────────────────────────────────────────────────────────────
+# Gemini embeddings. Only needed if you enable the embedding provider; the
+# default retriever is pure-Python keyword matching and needs nothing.
+# langchain-google-genai>=2.0.0
+

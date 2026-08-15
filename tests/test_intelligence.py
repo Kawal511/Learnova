@@ -7,28 +7,27 @@ import os
 import sys
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from parsers.schema import (
+from learnova.parsers.schema import (
     SlidePageEntity,
     TextBlockElement,
     TableElement,
     EquationElement,
     VisualAssetElement,
 )
-from intelligence.schema import (
+from learnova.intelligence.schema import (
     SlideIntelligence,
     PresentationIntent,
     TextPriority,
     VisualOpportunityType,
     ComplexityLevel,
 )
-from intelligence.engine import SlideIntelligenceEngine
-from intelligence import concept_extractor
-from intelligence import content_classifier
-from intelligence import text_prioritizer
-from intelligence import visual_opportunity
-from intelligence import complexity_scorer
+from learnova.intelligence.engine import SlideIntelligenceEngine
+from learnova.intelligence import concept_extractor
+from learnova.intelligence import content_classifier
+from learnova.intelligence import text_prioritizer
+from learnova.intelligence import visual_opportunity
+from learnova.intelligence import complexity_scorer
 
 
 @pytest.fixture

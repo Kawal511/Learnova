@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "learnova"
+version = "0.9.0"
+description = "AI presentation transformation engine — turns text-heavy PPTX/PDF into visual decks"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "python-pptx==1.0.2",
+    "PyMuPDF==1.25.3",
+    "python-dotenv==1.0.1",
+    "Pillow>=10.0.0",
+    "google-genai>=1.0.0",
+    "groq>=0.11.0",
+    "requests>=2.31.0",
+    "firecrawl-anydoc>=0.1.9",
+]
+
+[project.optional-dependencies]
+streamlit = ["streamlit==1.41.1", "pandas>=2.0.0", "altair>=5.0.0"]
+api = ["fastapi>=0.115.0", "uvicorn[standard]>=0.30.0", "python-multipart>=0.0.9"]
+embeddings = ["langchain-google-genai>=2.0.0"]
+dev = ["pytest>=8.0.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "live: tests that hit a real external API and need credentials",
+    "slow: tests that spawn subprocesses or build real artifacts",
+]

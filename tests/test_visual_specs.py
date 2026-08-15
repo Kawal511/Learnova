@@ -12,14 +12,13 @@ from typing import List
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from parsers.schema import SlidePageEntity, TextBlockElement, EquationElement
-from intelligence.engine import SlideIntelligenceEngine
-from intelligence.schema import SlideIntelligence
-from intelligence.transformation import SlideTransformationEngine, TransformationPlan
-from enhancement.schema import EnhancedSlide
-from visual_specs.schema import (
+from learnova.parsers.schema import SlidePageEntity, TextBlockElement, EquationElement
+from learnova.intelligence.engine import SlideIntelligenceEngine
+from learnova.intelligence.schema import SlideIntelligence
+from learnova.intelligence.transformation import SlideTransformationEngine, TransformationPlan
+from learnova.enhancement.schema import EnhancedSlide
+from learnova.visual_specs.schema import (
     SelectedVisual,
     VisualSpec,
     VisualSpecificationPlan,
@@ -34,8 +33,8 @@ from visual_specs.schema import (
     AIImageSpec,
     IconSpec,
 )
-from visual_specs.engine import VisualSpecificationEngine
-from visual_specs import (
+from learnova.visual_specs.engine import VisualSpecificationEngine
+from learnova.visual_specs import (
     flowchart_spec,
     timeline_spec,
     table_spec,
@@ -474,13 +473,15 @@ class TestVisualSpecificationEngine:
 
     def test_no_llm_imports_in_module(self):
         """Verify visual_specs package never imports LLM/SDK modules."""
-        import visual_specs.engine as eng_mod
-        import visual_specs.flowchart_spec as fc_mod
-        import visual_specs.kpi_spec as kpi_mod
+        import learnova.visual_specs.engine as eng_mod
+        import learnova.visual_specs.flowchart_spec as fc_mod
+        import learnova.visual_specs.kpi_spec as kpi_mod
 
-        # None of these modules should import groq, google.generativeai, or providers.llm_provider
+        # None of these modules may reach an LLM/vision SDK — visual_specs is
+        # required to stay fully deterministic.
+        forbidden = ("groq", "generativeai", "google.genai", "nvidia", "openai")
         for mod in [eng_mod, fc_mod, kpi_mod]:
-            src = open(mod.__file__).read()
-            assert "groq" not in src.lower(), f"groq import found in {mod.__file__}"
-            assert "generativeai" not in src.lower(), f"generativeai import found in {mod.__file__}"
-            assert "llm_provider" not in src, f"llm_provider import found in {mod.__file__}"
+            with open(mod.__file__, encoding="utf-8") as fh:
+                src = fh.read().lower()
+            for token in forbidden:
+                assert token not in src, f"{token} reference found in {mod.__file__}"
