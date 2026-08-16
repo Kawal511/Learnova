@@ -16,6 +16,7 @@ between them:
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
@@ -26,6 +27,11 @@ from learnova.logging_config import logger
 
 # Progress callback: (stage_name, status, fraction_complete, detail)
 ProgressFn = Callable[[str, str, float, str], None]
+
+# Below roughly one short paragraph of real text there is nothing to build a
+# deck from, and continuing produces a deck whose only content slide reads
+# "Page 1" — indistinguishable from a renderer bug.
+_MIN_EXTRACTED_CHARS = 120
 
 STAGES: List[str] = [
     "convert",
@@ -223,6 +229,30 @@ def generate(
         nonlocal sections
         sections = split_sections(markdown_doc.markdown, max_level=2)
         result.parsed_units = sections_to_parsed_dicts(sections)
+
+        # A scanned PDF extracts to almost nothing — page headers and little
+        # else. Every downstream stage then runs happily on empty input and the
+        # deck comes out with one slide reading "Page 1", which looks like a
+        # bug in the renderer rather than a document that needs OCR. Say so.
+        #
+        # Typed input is exempt: a short outline is the user's own words and
+        # however brief it is, it is deliberate — there is no failed extraction
+        # to warn about.
+        if markdown_doc.converter != "typed":
+            body = " ".join(str(u.get("text") or "") for u in result.parsed_units)
+            body = re.sub(r"(?i)\bpage\s*\d+\b", "", body).strip()
+            if len(body) < _MIN_EXTRACTED_CHARS:
+                has_images = bool(getattr(markdown_doc, "assets", None))
+                raise ValueError(
+                    f"Only {len(body)} characters of text could be extracted "
+                    f"from {markdown_doc.source_name!r}. "
+                    + (
+                        "The document appears to be scanned or image-only, so "
+                        "it needs OCR: set GEMINI_API_KEY and enable vision OCR."
+                        if has_images
+                        else "The document appears to be empty or unreadable."
+                    )
+                )
         return len(result.parsed_units)
 
     runner.run("convert", _convert, critical=True)

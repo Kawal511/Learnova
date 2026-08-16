@@ -40,6 +40,25 @@ SYSTEM_PROMPT = (
     '{"mermaid_code": "graph TD\\n  A[Step 1] --> B[Step 2]", "diagram_title": "..."}'
 )
 
+def _sanitise_mermaid(code: str) -> str:
+    """
+    Repair the malformed edge syntax models keep emitting.
+
+    Observed in real output: ``A -->|Calculate|> B``. The trailing ``>`` after
+    a closing edge label is invalid and makes mermaid refuse to draw the whole
+    diagram, so the slide rendered empty.
+    """
+    if not code:
+        return code
+    # `-->|label|>` and `--|label|>` lose the stray arrow head.
+    code = re.sub(r"(\|[^|\n]*\|)\s*>\s*", r"\1 ", code)
+    # `-- >` / `- ->` split arrows.
+    code = re.sub(r"--\s+>", "-->", code)
+    # Collapse runs of spaces without touching the newlines mermaid needs.
+    code = re.sub(r"[ \t]{2,}", " ", code)
+    return code.strip()
+
+
 def generate_mermaid_diagram(text: str, title: str = "") -> dict:
     """
     Generate Mermaid.js code for process/workflow text.
@@ -69,6 +88,7 @@ def generate_mermaid_diagram(text: str, title: str = "") -> dict:
         mermaid_code = data.get("mermaid_code", "")
         # Basic cleanup for mermaid formatting
         mermaid_code = mermaid_code.replace("\\n", "\n").strip()
+        mermaid_code = _sanitise_mermaid(mermaid_code)
         
         if not mermaid_code.startswith(("graph", "flowchart", "sequenceDiagram", "stateDiagram", "classDiagram")):
             mermaid_code = f"graph TD\n  A[{title or 'Start'}] --> B[Process Content]"

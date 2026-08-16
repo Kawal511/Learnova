@@ -8,7 +8,8 @@ import html
 import re
 import json
 from learnova.rendering.theme_engine import (
-    get_theme, auto_detect_theme, select_slide_layout, resolve_theme, THEMES,
+    get_theme, auto_detect_theme, select_slide_layout, resolve_theme,
+    readable_text_hex, THEMES,
 )
 
 def _inline_quiz_html(quiz: dict, theme) -> str:
@@ -50,6 +51,9 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
     Constructs standalone HTML presentation with Reveal.js and Mermaid.js.
     """
     theme = resolve_theme(topic_title, theme_id, theme_spec)
+    # Text drawn on top of the primary fill. Hardcoding white broke every
+    # light-primary palette; luminance picks the readable one.
+    on_primary = readable_text_hex(theme.primary_hex)
 
     slides_html_list = []
 
@@ -84,7 +88,7 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
         if layout_type == "TABLE" and "table_headers" in imp:
             headers = imp.get("table_headers", [])
             rows = imp.get("table_rows", [])
-            th_cells = "".join(f"<th style='background-color:#1e2761; color:#ffbd00; padding:12px;'>{html.escape(str(h))}</th>" for h in headers)
+            th_cells = "".join(f"<th style='background-color:{theme.primary_hex}; color:{on_primary}; padding:12px;'>{html.escape(str(h))}</th>" for h in headers)
             tr_rows = ""
             for r in rows:
                 tds = "".join(f"<td style='padding:10px; border-bottom:1px solid #ddd;'>{html.escape(str(val))}</td>" for val in r)
@@ -106,10 +110,10 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
             metric_desc = html.escape(str(imp.get("metric_desc", takeaway_text)))
 
             slide_body = f"""
-            <div style="background:#1e2761; border:4px solid #ffbd00; border-radius:12px; padding:40px; text-align:center; color:#fff; margin-top:20px;">
-                <h1 style="font-size:4.5rem; color:#ffbd00; margin:0;">{metric_val}</h1>
-                <h3 style="color:#cadcfc; text-transform:uppercase; margin:10px 0;">{metric_lbl}</h3>
-                <p style="font-size:1.2rem; color:#fff;">{metric_desc}</p>
+            <div style="background:{theme.primary_hex}; border:4px solid {theme.accent_hex}; border-radius:12px; padding:40px; text-align:center; color:{on_primary}; margin-top:20px;">
+                <h1 style="font-size:4.5rem; color:{theme.accent_hex}; margin:0;">{metric_val}</h1>
+                <h3 style="color:{theme.subtext_hex}; text-transform:uppercase; margin:10px 0;">{metric_lbl}</h3>
+                <p style="font-size:1.2rem; color:{on_primary};">{metric_desc}</p>
             </div>
             """
 
@@ -125,14 +129,14 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
                 opt_str = html.escape(str(opt))
                 is_correct = "true" if opt_str.startswith(correct_opt) else "false"
                 opt_buttons += f"""
-                <button onclick="checkAnswer(this, {is_correct})" style="width:48%; padding:15px; margin:1%; background:#ffffff; border:3px solid #1e2761; font-weight:bold; font-size:1rem; cursor:pointer; transition:all 0.2s;">
+                <button onclick="checkAnswer(this, {is_correct})" style="width:48%; padding:15px; margin:1%; background:#ffffff; border:3px solid {theme.primary_hex}; font-weight:bold; font-size:1rem; cursor:pointer; transition:all 0.2s;">
                     {opt_str}
                 </button>
                 """
 
             slide_body = f"""
-            <div style="text-align:left; background:#f4f6fb; border-left:6px solid #1e2761; padding:20px; border-radius:8px; margin-top:20px;">
-                <h3 style="color:#1e2761; margin-top:0;">❓ {q_text}</h3>
+            <div style="text-align:left; background:#f4f6fb; border-left:6px solid {theme.primary_hex}; padding:20px; border-radius:8px; margin-top:20px;">
+                <h3 style="color:{theme.primary_hex}; margin-top:0;">❓ {q_text}</h3>
                 <div style="display:flex; flex-wrap:wrap; margin-top:15px;">
                     {opt_buttons}
                 </div>
@@ -150,13 +154,13 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
 
             slide_body = f"""
             <div style="display:flex; gap:20px; text-align:left; margin-top:20px;">
-                <div style="flex:1; background:#ffffff; padding:15px; border:2px solid #1e2761; border-radius:8px;">
+                <div style="flex:1; background:#ffffff; padding:15px; border:2px solid {theme.primary_hex}; border-radius:8px;">
                     <div class="mermaid" style="font-size:0.8rem;">
                         {escaped_mermaid}
                     </div>
                 </div>
                 <div style="flex:1; font-size:0.9rem;">
-                    <h4 style="color:#1e2761; margin-top:0;">Process Steps:</h4>
+                    <h4 style="color:{theme.primary_hex}; margin-top:0;">Process Steps:</h4>
                     <ul>{b_items}</ul>
                 </div>
             </div>
@@ -174,7 +178,7 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
 
         # Takeaway section
         takeaway_html = f"""
-        <div style="background:#1e2761; color:#fff; border-left:4px solid #ffbd00; padding:12px; font-size:0.9rem; margin-top:20px; text-align:left; border-radius:4px;">
+        <div style="background:{theme.primary_hex}; color:{on_primary}; border-left:4px solid {theme.accent_hex}; padding:12px; font-size:0.9rem; margin-top:20px; text-align:left; border-radius:4px;">
             <strong>Key Takeaway:</strong> {takeaway_text}
         </div>
         """ if takeaway_text else ""
@@ -182,9 +186,8 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
         # Slide wrapper
         slides_html_list.append(f"""
         <section data-transition="slide" style="text-align:left;">
-            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:3px solid #1e2761; padding-bottom:10px;">
-                <h2 style="color:#1e2761; font-family:'{theme.heading_font}', sans-serif; font-size:2.2rem; margin:0; text-transform:uppercase;">{title_text}</h2>
-                <span style="background:#ffbd00; color:#000; padding:4px 10px; font-weight:bold; font-size:0.8rem; border:1px solid #000;">{layout_type}</span>
+            <div style="border-bottom:3px solid {theme.primary_hex}; padding-bottom:10px;">
+                <h2 style="color:{theme.primary_hex}; font-family:'{theme.heading_font}', sans-serif; font-size:2.2rem; margin:0; text-transform:uppercase;">{title_text}</h2>
             </div>
             {slide_body}
             {_inline_quiz_html(imp.get("inline_quiz"), theme)}
@@ -246,7 +249,7 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
             const exp = parent.parentElement.querySelector('.quiz-exp');
             
             if (isCorrect) {{
-                btn.style.backgroundColor = '#ffbd00';
+                btn.style.backgroundColor = '{theme.accent_hex}';
                 btn.style.color = '#000000';
                 feedback.style.display = 'block';
                 feedback.style.backgroundColor = '#d4edda';

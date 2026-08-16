@@ -21,6 +21,13 @@ from learnova.ai.diagram_gen import generate_mermaid_diagram
 from learnova.logging_config import logger
 from learnova.providers.base import LLMProvider
 from learnova.providers.router import TASK_LAYOUT, get_router
+from learnova.textutils import (
+    clean_bullet,
+    dedupe_bullets,
+    is_redundant,
+    strip_inline_markdown,
+    truncate_words,
+)
 
 load_dotenv()
 
@@ -50,17 +57,29 @@ Your job is to transform raw presentation text, lecture notes, and OCR diagram \
 descriptions into structured, visually engaging teaching material.
 
 CRITICAL INSTRUCTIONS FOR CONTENT IMPROVEMENT:
-1. IMPORTANT TEXT SELECTION: Extract ONLY the top 3 to 4 most critical educational concepts. Strip away verbal fluff, filler words, and repetitive sentences.
-2. CONCISE REPHRASING: Rephrase dense paragraphs into punchy, high-impact bullet points (max 12-15 words per bullet).
-3. HIGH-YIELD TAKEAWAY: Formulate a single, high-yield summary sentence ("takeaway") that captures the core lesson.
+1. KEEP EVERY TEACHABLE POINT. You are RESTRUCTURING, not summarising. Each distinct
+   fact, definition, figure, step or example in the input MUST survive as its own
+   bullet. Do NOT cap the list — emit as many bullets as the input has points.
+   A later stage decides how many fit on a slide and moves the rest onto a
+   continuation slide, so anything you drop here is lost from the deck entirely.
+   You may only remove: exact repetition, filler words, and the slide's own title.
+2. CONCISE REPHRASING: Tighten each point into a punchy bullet (aim 12-20 words).
+   Preserve concrete numbers, currency amounts, formulas and proper nouns VERBATIM.
+   Keep any "Label: detail" prefix intact — it becomes the card heading.
+3. HIGH-YIELD TAKEAWAY: Formulate a single, high-yield summary sentence ("takeaway")
+   that captures the core lesson. Leave it "" if the content has no single lesson.
 4. DIAGRAM SYNTHESIS: If the input text contains visual diagram OCR (e.g., arrows, steps, flowcharts, architectures), extract the step-by-step node sequence accurately.
+5. PLAIN TEXT ONLY: never emit markdown emphasis (**bold**, _italics_) inside a
+   bullet, title or takeaway — it renders literally on the slide.
 
 SELECT THE BEST VISUAL LAYOUT TYPE:
 - "FLOWCHART": For process steps, workflows, cycles, algorithms, chemical/biological mechanisms.
 - "TABLE": For comparisons, feature vs feature breakdowns, pros & cons, vs lists.
 - "METRIC": For statistical callouts, numerical performance data, percentages, key metrics.
 - "CARD_GRID": For 3 to 4 distinct conceptual pillars, key categories, or core principles.
-- "MINIMAL_TEXT": For general descriptive text (max 3-4 concise bullets).
+- "MINIMAL_TEXT": For general descriptive text.
+
+The layout choice does NOT limit how many bullets you return. Return them all.
 
 Return ONLY valid JSON — no markdown fences, no extra text, nothing else.
 Exact schema:
@@ -310,9 +329,18 @@ def _build_fallback(text: str, current_title: str, layout_type: str) -> dict:
             # content as ordinary bullets instead.
             result["layout_type"] = "MINIMAL_TEXT"
     elif layout_type == "METRIC":
-        result["metric_value"] = "Key Stat"
-        result["metric_label"] = current_title or "Metric"
-        result["metric_desc"] = str(text[:100])
+        # Same principle as the table rule above: a metric slide is one huge
+        # number, so without a real quantity there is nothing to show. It used
+        # to print the literal words "Key Stat" at headline size.
+        from learnova.pipeline.visual_planner import extract_quantity
+
+        value = extract_quantity(text)
+        if value:
+            result["metric_value"] = value[:16]
+            result["metric_label"] = current_title or "Metric"
+            result["metric_desc"] = truncate_words(text, 120)
+        else:
+            result["layout_type"] = "MINIMAL_TEXT"
     return result
 
 
@@ -357,6 +385,34 @@ def _call_llm(
             )
             raise ValueError("rate_limit")
         raise
+
+
+def _restore_dropped_points(bullets: list[str], source: str) -> list[str]:
+    """
+    Put back source points the model omitted.
+
+    Prompting alone does not reliably stop a model summarising: told to keep
+    every point, it still returned 3 bullets for 8 sentences of input. So the
+    result is checked against the source and anything unrepresented is appended
+    verbatim. Rephrasing is kept where the model did the work; coverage is
+    guaranteed regardless.
+    """
+    candidates = [s for s in split_sentences(source) if len(s.split()) >= 4]
+    if not candidates:
+        return bullets
+
+    restored = list(bullets)
+    for sentence in candidates:
+        cleaned = clean_bullet(sentence)
+        if cleaned and not is_redundant(cleaned, restored):
+            restored.append(cleaned)
+
+    if len(restored) > len(bullets):
+        logger.info(
+            "[layout_router] restored %d point(s) the model dropped (%d -> %d)",
+            len(restored) - len(bullets), len(bullets), len(restored),
+        )
+    return restored
 
 
 # ── Main public function ──────────────────────────────────────────────────────
@@ -436,11 +492,12 @@ def classify_and_structure_chunk(text: str, current_title: str = "") -> dict:
         # Ensure all string fields are actually strings
         title = str(data.get("title", current_title or "Key Concept")).strip()
         takeaway = str(data.get("takeaway", "Review carefully.")).strip()
-        bullets = [
-            str(b).strip()
-            for b in data.get("bullets", [])
-            if str(b).strip()
-        ][:4]
+        # No cap here. This used to be `[:4]`, which silently deleted every
+        # point past the fourth before the density stage ever saw them — the
+        # continuity contract in docs/PPT_RULES.md says overflow moves to a
+        # continuation slide, and it cannot if the content is already gone.
+        bullets = dedupe_bullets([str(b) for b in data.get("bullets", [])])
+        bullets = _restore_dropped_points(bullets, text)
 
         result: dict = {
             "layout_type": layout_type,
@@ -476,12 +533,22 @@ def classify_and_structure_chunk(text: str, current_title: str = "") -> dict:
             ]
 
         elif layout_type == "METRIC":
+            from learnova.pipeline.visual_planner import extract_quantity
+
             met = data.get("metric_data", {})
             if not isinstance(met, dict):
                 met = {}
-            result["metric_value"] = str(met.get("value", "100%"))
-            result["metric_label"] = str(met.get("label", title))
-            result["metric_desc"] = str(met.get("description", takeaway))
+            # Trust the model's figure only if it really is one. It returned
+            # "n/a" for IRR, which rendered as the slide's headline number.
+            value = extract_quantity(str(met.get("value", ""))) or extract_quantity(text)
+            if value:
+                result["metric_value"] = value[:16]
+                result["metric_label"] = strip_inline_markdown(str(met.get("label", title)))
+                result["metric_desc"] = truncate_words(
+                    str(met.get("description") or takeaway), 120
+                )
+            else:
+                result["layout_type"] = "MINIMAL_TEXT"
 
         elapsed = time.monotonic() - t_start
         logger.info("[%s] SUCCESS layout=%s title=%r (%.2fs)", stage, layout_type, title[:40], elapsed)

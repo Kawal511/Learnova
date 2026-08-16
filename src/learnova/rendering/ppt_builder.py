@@ -7,13 +7,14 @@ and embeds PowerPoint OpenXML slide transition animations.
 import io
 import re
 from pptx import Presentation
-from pptx.util import Inches, Pt
+from pptx.util import Emu, Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.oxml.xmlchemy import OxmlElement
 
 from learnova.rendering import layout as L
+from learnova.textutils import strip_inline_markdown
 from learnova.rendering.theme_engine import (
     get_theme, auto_detect_theme, select_slide_layout, resolve_theme,
     ColorPalette, THEMES, LAYOUT_STYLES,
@@ -91,10 +92,19 @@ def _add_figure_slide(prs, theme: ColorPalette, title_text: str, image_bytes: by
         _add_slide_transition(slide)
         _add_header_bar(slide, f"{title_text} — Figure", theme)
 
-        # Centre the image in the content band (1.35" → 5.85").
-        slide.shapes.add_picture(
-            io.BytesIO(image_bytes), Inches(2.4), Inches(1.35), height=Inches(4.5)
-        )
+        # Fit the image inside the content band, preserving aspect ratio, then
+        # centre it. Setting height alone let python-pptx derive the width from
+        # the aspect ratio unchecked: a wide figure came out 12.15" starting at
+        # x=2.4", i.e. 1.2" past the right edge of the slide.
+        box_w = L.SLIDE_W - 2 * L.MARGIN_X
+        box_h = (6.0 if caption else L.SLIDE_H - L.BOTTOM_MARGIN) - L.CONTENT_TOP - L.GAP
+        pic = slide.shapes.add_picture(io.BytesIO(image_bytes), Inches(0), Inches(0))
+        native_w, native_h = Emu(pic.width).inches, Emu(pic.height).inches
+        scale = min(box_w / native_w, box_h / native_h) if native_w and native_h else 1.0
+        draw_w, draw_h = native_w * scale, native_h * scale
+        pic.width, pic.height = Inches(draw_w), Inches(draw_h)
+        pic.left = Inches(L.MARGIN_X + (box_w - draw_w) / 2)
+        pic.top = Inches(L.CONTENT_TOP + (box_h - draw_h) / 2)
 
         if caption:
             cap_box = slide.shapes.add_textbox(Inches(0.5), Inches(6.0), Inches(12.3), Inches(0.9))
@@ -108,6 +118,48 @@ def _add_figure_slide(prs, theme: ColorPalette, title_text: str, image_bytes: by
         return True
     except Exception:
         return False
+
+
+# A leading "Label: body" pair, which source decks use constantly
+# ("Definition: ...", "Purpose: ...", "Cash Flows: ..."). The label is the most
+# useful thing on the card and was being discarded.
+_LABELLED = re.compile(r"^\s*([A-Z][\w&/()\- ]{2,34}?)\s*[:–—-]\s+(\S.*)$", re.S)
+
+# Schema words that describe the field rather than name the content.
+_META_LABELS = {
+    "label", "item", "point", "bullet", "text", "title", "heading",
+    "description", "desc", "value", "field", "key", "name", "content",
+}
+
+
+def _split_card_label(text: str, fallback: str) -> tuple[str, str]:
+    """
+    Split a bullet into (card heading, card body).
+
+    Cards used to be headed "PILLAR 1", "STEP 2" — numbering that tells a
+    reader nothing. Where the text carries its own label we promote it; the
+    generic heading is only a fallback.
+    """
+    # Normalise here as well as upstream: a leftover emphasis marker sits
+    # between the label and its colon ("Strategic Growth:* Helps ...") and
+    # stops the pattern matching, silently costing the card its real heading.
+    clean = strip_inline_markdown(text)
+
+    # Models sometimes echo the schema word instead of the content's own label,
+    # giving "Label: Cash Flows - Estimated inflows". Peel that off and let the
+    # real label behind it be found.
+    for _ in range(2):
+        match = _LABELLED.match(clean)
+        if not match:
+            break
+        label, body = match.group(1).strip(), match.group(2).strip()
+        if not body or len(label.split()) > 5:
+            break
+        if label.lower() in _META_LABELS:
+            clean = body           # retry against what followed
+            continue
+        return label.upper(), body
+    return fallback, clean
 
 
 def _apply_theme_fonts(prs, theme: ColorPalette) -> None:
@@ -434,22 +486,25 @@ def build_pptx(slides_data: list[dict], topic_title: str = "Learnova Presentatio
                 ctf = card.text_frame
                 ctf.word_wrap = True
 
+                heading, body = _split_card_label(step_text, f"STEP {idx + 1}")
+
                 sp1 = ctf.paragraphs[0]
-                sp1.text = f"STEP {idx + 1}"
+                sp1.text = heading
                 sp1.font.size = Pt(14)
                 sp1.font.bold = True
                 sp1.font.color.rgb = theme.accent_rgb if idx % 2 == 0 else theme.primary_rgb
 
                 sp2 = ctf.add_paragraph()
-                sp2.text = step_text
+                sp2.text = body
                 sp2.font.size = Pt(step_pt)
                 sp2.font.color.rgb = theme.text_rgb
 
         # ── 5. CARD GRID LAYOUT ──────────────────────────────────────────────
         elif layout_type == "CARD_GRID":
             bullets = imp.get("bullets", [])
-            items = [b for b in (bullets or []) if str(b).strip()][:6] or [
-                "Pillar 1", "Pillar 2", "Pillar 3"]
+            # No placeholder cards: an empty grid used to render three boxes
+            # literally reading "Pillar 1", "Pillar 2", "Pillar 3".
+            items = [b for b in (bullets or []) if str(b).strip()][:6]
             cells = L.grid_cells(len(items), band, max_per_row=4)
             card_pt = min(
                 L.fit_font_size([i], c.width - 0.3, c.height - 0.8,
@@ -470,14 +525,16 @@ def build_pptx(slides_data: list[dict], topic_title: str = "Learnova Presentatio
                 ctf = card.text_frame
                 ctf.word_wrap = True
 
+                heading, body = _split_card_label(item_text, f"{idx + 1:02d}")
+
                 sp1 = ctf.paragraphs[0]
-                sp1.text = f"PILLAR {idx + 1}"
+                sp1.text = heading
                 sp1.font.size = Pt(14)
                 sp1.font.bold = True
                 sp1.font.color.rgb = theme.primary_rgb
 
                 sp2 = ctf.add_paragraph()
-                sp2.text = item_text
+                sp2.text = body
                 sp2.font.size = Pt(card_pt)
                 sp2.font.color.rgb = theme.text_rgb
 

@@ -44,6 +44,9 @@ order it runs. Anything not listed here is not enforced.
 | Images | Attached to the **first** chunk of a unit only — otherwise the renderer emits one duplicate figure slide per paragraph |
 | One section, one slide | Chunks of a section are merged back before rendering. Without this, a 22-paragraph section became 22 near-empty slides sharing one title |
 | Sentence splitting | Prose splits on `.!?` only when the period is not a decimal (`3.14`), a single initial (`J. Smith`), or a known abbreviation (`no.`, `fig.`, `vs.`). Splitting naively turned "Total no. of observations" into two meaningless bullets |
+| Markdown stripping | Emphasis, code ticks and continuation backslashes are removed from every string that reaches a slide, including **unbalanced** markers — extraction routinely cuts a sentence between its opening and closing `**`, and the remnant rendered literally as `Strategic Growth:*` |
+| Word-boundary trimming | Over-long text is cut at a space, never mid-word. Character slicing shipped slides ending "The cost of ca" and "development of Si" |
+| Restatement removal | A bullet identical to, or wholly contained in, the slide title or a sibling bullet is dropped. One card grid rendered "Key Inputs for Capital Budgeting Decisions", "Key Inputs" and "Capital Budgeting Decisions" as three separate cards |
 
 ## 4. Image anchoring
 
@@ -72,11 +75,32 @@ The LLM router runs first; on failure (bad key, quota, timeout) a keyword
 heuristic produces the same shape. **Neither path truncates content** — bullet
 budgets are applied later, by the density stage.
 
+This rule was previously violated in two places at once, which is why decks
+came out thin. The router capped the model's reply at `bullets[:4]`, and the
+prompt instructed the model to "extract ONLY the top 3 to 4 concepts" — so
+eight points of source became three before the density stage ever ran, and its
+continuation-slide machinery had nothing left to carry over. The cap is gone,
+the prompt now says restructure rather than summarise, and because prompting
+alone does not reliably stop a model summarising, the result is diffed against
+the source: any sentence not represented in the returned bullets is appended
+verbatim. Rephrasing is kept where the model did the work; coverage is
+guaranteed either way.
+
 **No fabricated tables.** If a slide is classified `TABLE` but no real rows can
 be parsed from the text, it is downgraded to `MINIMAL_TEXT`. The old fallback
 invented a one-row `Item / Description` grid, which looked broken on a slide.
 Likewise a table continuation page that has run out of rows becomes
 `MINIMAL_TEXT`, since a table branch with nothing to draw rendered blank.
+
+**No fabricated metrics.** The same rule applies to `METRIC`, which devotes the
+whole canvas to one figure. If no real quantity can be read from the text the
+slide is downgraded to `MINIMAL_TEXT`, rather than printing the placeholders
+`Key Stat` or `n/a` at headline size — both of which shipped.
+
+**Quantities stay intact.** The figure is matched with currency symbol,
+thousands separators and unit (`$250,000`, `₹50,000`, `12.5%`, `5 years`). The
+old pattern was a bare `\d+`, which stopped at the separator and headlined
+`$250,000` as **250** and `₹50,000` as **50**.
 
 ## 6. Deterministic visual planning
 
@@ -129,6 +153,9 @@ The user picks one setting; every limit derives from it.
 
 - Content is **never truncated away**. Overflow moves to a continuation slide.
 - A slide is never split mid-bullet.
+- Pages are **balanced**, so the last one is never an orphan. Five bullets at a
+  budget of four become 3+2, not 4+1 — a whole slide, header and all, used to
+  be spent on a single line.
 - Continuation slides are titled `Topic (2/3)` so the run reads as one topic.
 - Only the **final** part carries the takeaway bar, so the conclusion lands once.
 - Only the **first** part keeps the figure, so images are not duplicated.
@@ -193,6 +220,9 @@ to become 15).
 | Transitions | OpenXML push transition on every slide |
 | Isolation | PPTX and HTML are built in a **separate interpreter** to contain C-extension state |
 | Build failure | Degrades to an in-process build; a failed artifact never fails the whole run |
+| Web deck theming | The HTML deck draws its chrome from the chosen palette, like the PPTX. It previously hardcoded a navy `#1e2761` throughout while captioning itself "Theme: Custom Palette", so a selected theme barely showed. Text on the primary fill is picked by luminance, not assumed white |
+| No debug chrome | The layout type (`METRIC`, `CARD_GRID`) was printed as a badge on every web slide. It is diagnostic output and does not belong in a teaching deck |
+| Mermaid repair | Malformed edge syntax is fixed before rendering. Models emit `A -->\|label\|> B`; the trailing `>` is invalid and makes mermaid refuse to draw the **whole** diagram, so the slide came out empty |
 
 ### Dynamic sizing
 
@@ -206,6 +236,9 @@ no longer spills past the edge.
 | Legibility floor | Body stops at 11 pt, cards at 9 pt. Below that the content is paginated instead of shrunk further |
 | Ceilings | Body 22 pt, cards 18 pt, slide title 28 pt (title floors at 15 pt) |
 | Uniform sizing | All cards in a row share one size — the smallest that fits any of them — so the row reads evenly |
+| Card headings | Taken from the content's own `Label: detail` prefix, which source decks use constantly (`Definition:`, `Cash Flows:`, `Strategic Growth:`). Cards used to be headed `PILLAR 1`, `STEP 2` — numbering that tells a reader nothing. Schema words the model echoes back (`Label:`, `Item:`, `Value:`) are peeled off so the real label behind them is found; only content with no label falls back to a number |
+| Figure fitting | An image is scaled to fit the content band on **both** axes and centred. Setting height alone let python-pptx derive the width unchecked, putting a wide figure 1.2 in past the right edge of the slide |
+| No placeholder cards | An empty card grid renders nothing, rather than three boxes literally reading `Pillar 1`, `Pillar 2`, `Pillar 3` |
 | Card grids | Wrap past 4 per row and use the vertical space; the last row is balanced (5 items become 3+2, not 4+1) |
 | Text + image | The body splits into a text column and a 38% image column; with no image the text takes the full width |
 | Measurement | An estimate (0.52 × point size per glyph, 1.28 line height), deliberately conservative so the error lands on "slightly small" rather than "overflowing". PowerPoint does the final shaping |

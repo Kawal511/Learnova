@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List
 
 from learnova.logging_config import logger
+from learnova.textutils import clean_bullet, dedupe_bullets
 
 # ── Profiles ──────────────────────────────────────────────────────────────────
 
@@ -110,7 +111,7 @@ def trim_bullet(text: str, profile: DensityProfile) -> str:
     Cuts at a clause boundary where possible so the result still reads as a
     sentence, rather than stopping mid-phrase with an ellipsis.
     """
-    clean = re.sub(r"\s+", " ", (text or "").strip())
+    clean = clean_bullet(text)
     if not clean:
         return ""
 
@@ -132,8 +133,38 @@ def trim_bullet(text: str, profile: DensityProfile) -> str:
 
 
 def _chunk(items: List[Any], size: int) -> List[List[Any]]:
+    """
+    Split into pages, then rebalance so the last page is never a near-empty
+    orphan.
+
+    Strict chunking sent 5 bullets at a budget of 4 to a "(2/2)" slide holding
+    one line — a whole slide, header and all, for a single sentence. Spreading
+    the same items evenly gives 3+2 instead.
+    """
     size = max(1, size)
-    return [items[i: i + size] for i in range(0, len(items), size)]
+    if len(items) <= size:
+        return [list(items)] if items else []
+
+    pages = -(-len(items) // size)                 # ceil
+    base, extra = divmod(len(items), pages)
+    out, start = [], 0
+    for i in range(pages):
+        take = base + (1 if i < extra else 0)
+        out.append(items[start: start + take])
+        start += take
+    return out
+
+
+def _restates(bullet: str, title: str) -> bool:
+    """
+    True when a bullet just repeats the slide title.
+
+    Only fires on a near-exact match: a bullet that legitimately expands on the
+    title shares words with it, and dropping those would lose real content.
+    """
+    strip = lambda s: re.sub(r"[^a-z0-9 ]", "", (s or "").lower()).strip()
+    a, b = strip(bullet), strip(title)
+    return bool(a) and bool(b) and (a == b or (len(a) >= 8 and a in b))
 
 
 def _title_for_part(title: str, index: int, total: int) -> str:
@@ -260,8 +291,12 @@ def paginate_slide(entry: dict, profile: DensityProfile,
     # ── Text-ish layouts: bullets, plus enhancement extras ───────────────────
     limit = profile.max_grid_cards if layout == "CARD_GRID" else profile.max_bullets
 
-    bullets = [trim_bullet(b, profile) for b in (improved.get("bullets") or [])]
-    bullets = [b for b in bullets if b]
+    # Dedupe before trimming: the planner sometimes emitted the slide title and
+    # its own fragments as sibling bullets, which filled a card grid with three
+    # restatements of the heading.
+    source = dedupe_bullets(improved.get("bullets") or [])
+    source = [b for b in source if not _restates(b, title)]
+    bullets = [b for b in (trim_bullet(b, profile) for b in source) if b]
 
     for extra in enhancement_bullets(enhanced, profile):
         bullets.append(trim_bullet(extra, profile))

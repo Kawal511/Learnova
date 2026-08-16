@@ -29,6 +29,13 @@ from typing import Any, Dict, List, Optional
 
 from learnova.logging_config import logger
 from learnova.parsers.schema import SlidePageEntity, TextBlockElement
+from learnova.textutils import (
+    clean_bullet,
+    dedupe_bullets,
+    is_redundant,
+    strip_inline_markdown,
+    truncate_words,
+)
 
 # Minimum steps before a sequence is worth drawing as a flowchart.
 _MIN_FLOW_STEPS = 3
@@ -81,10 +88,39 @@ def _build_slide_entity(title: str, text: str, slide_id: int = 0) -> SlidePageEn
 
 def _clean(label: str, limit: int = 60) -> str:
     """Trim a bullet down to something that fits inside a node box."""
-    text = re.sub(r"^\s*(?:step\s*\d+\s*[:.\-]?|[-*+]|\d+[.)])\s*", "", label, flags=re.I)
-    # Collapse newlines too — a label spanning lines breaks node rendering.
-    text = re.sub(r"\s+", " ", text).strip(" .;:")
-    return text[:limit] if len(text) > limit else text
+    text = clean_bullet(label).strip(" .;:")
+    return truncate_words(text, limit) if len(text) > limit else text
+
+
+# A quantity as a reader would write it: optional currency, thousands
+# separators, optional decimals, optional unit. The old pattern was `\d+` with
+# no separator support, so it read "$250,000" as **250** and "₹50,000" as
+# **50** — then displayed that as the headline figure of the slide.
+_QUANTITY = re.compile(
+    r"(?P<currency>[$₹€£¥]\s?)?"
+    r"(?P<number>\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
+    r"\s?(?P<unit>%|percent|percentage|x|k|bn|mn|m|cr|crore|lakh|"
+    r"years?|yrs?|months?|days?)?",
+    re.I,
+)
+
+
+def extract_quantity(text: str) -> str:
+    """
+    Pull the headline figure out of a statistic, keeping it intact.
+
+    Returns "" when the text carries no quantity, which the caller must treat
+    as "this is not a metric slide" rather than substituting a placeholder.
+    """
+    match = _QUANTITY.search(strip_inline_markdown(text or ""))
+    if not match:
+        return ""
+    value = (match.group("currency") or "").strip() + match.group("number")
+    unit = match.group("unit") or ""
+    if unit:
+        value += "" if unit in {"%"} else " "
+        value += unit
+    return value.strip()
 
 
 def _mermaid_from_flowchart(spec: Dict[str, Any]) -> str:
@@ -234,26 +270,35 @@ def plan_visual(title: str, text: str, slide_id: int = 0) -> Optional[Dict[str, 
     # ── 4. KPI / metric callout ──────────────────────────────────────────────
     if len(stats) >= _MIN_KPI_METRICS:
         primary = str(stats[0])
-        match = re.search(r"\d+(?:\.\d+)?\s*(?:%|percent|x|k|m|bn)?", primary, re.I)
-        return {
-            "layout_type": "METRIC",
-            "title": title or "Key Metric",
-            "metric_value": (match.group(0).strip() if match else "Key Stat")[:12],
-            "metric_label": title or intel.main_topic or "Metric",
-            "metric_desc": _clean(primary, 120),
-            "bullets": [_clean(s, 80) for s in stats[1:4]],
-            "takeaway": intel.learning_objective or "Note the headline figures.",
-            "visual_source": "intelligence",
-        }
+        value = extract_quantity(primary)
+        # A metric slide devotes the whole canvas to one number. If no real
+        # quantity can be read out, there is nothing to headline — fall through
+        # to a bullet layout rather than printing "Key Stat" or "n/a" in 40pt.
+        if value:
+            return {
+                "layout_type": "METRIC",
+                "title": title or "Key Metric",
+                "metric_value": value[:16],
+                "metric_label": title or intel.main_topic or "Metric",
+                "metric_desc": _clean(primary, 120),
+                "bullets": dedupe_bullets([_clean(s, 80) for s in stats[1:4]]),
+                # No filler takeaway: an empty string drops the bar entirely,
+                # which reads better than "Note the headline figures."
+                "takeaway": intel.learning_objective or "",
+                "visual_source": "intelligence",
+            }
 
     # ── 5. Icon grid for a set of distinct concepts ──────────────────────────
-    concepts = [c for c in (intel.key_concepts or []) if c.strip()]
+    concepts = dedupe_bullets([_clean(c, 70) for c in (intel.key_concepts or [])])
+    # Drop concepts that merely restate the slide title — the grid was filling
+    # with three paraphrases of its own heading.
+    concepts = [c for c in concepts if not is_redundant(c, [title or ""])]
     if len(concepts) >= 3:
         return {
             "layout_type": "CARD_GRID",
             "title": title or intel.main_topic or "Key Concepts",
-            "bullets": [_clean(c, 70) for c in concepts[:4]],
-            "takeaway": intel.learning_objective or "Four ideas to remember.",
+            "bullets": concepts[:4],
+            "takeaway": intel.learning_objective or "",
             "visual_source": "intelligence",
         }
 
