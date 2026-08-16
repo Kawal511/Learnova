@@ -1,8 +1,11 @@
 # 🎓 Learnova — AI Presentation Transformation Engine
 
 > Transforms text-heavy PPTs and PDFs into modern, visually engaging, presentation-ready decks.
-> Flowcharts, timelines, comparison tables, KPI cards, SmartArt and interleaved quizzes —
+> Flowcharts, timelines, comparison tables, KPI cards, SmartArt and inline checkpoint quizzes —
 > fully programmatic, with optional Groq / NVIDIA NIM / Gemini AI integration.
+
+**Run it with no API keys at all** and you still get a deck — layout falls back
+to a keyword heuristic. Keys improve the writing; they are not a dependency.
 
 ---
 
@@ -20,16 +23,16 @@
 7. **Enhance** — examples, analogies and revision points from `enhancement/`.
 8. **Apply text density** — low / medium / heavy, paginating overflow onto
    numbered continuation slides so nothing is dropped.
-9. **Generate quizzes** and interleave them as checkpoint slides.
+9. **Generate quizzes** and attach them **inline**, as a band at the foot of the
+   slide that closes each run — the deck no longer inflates with interruptions.
 10. **Score** engagement quality per slide.
 11. **Export** an animated `.pptx` and an interactive Reveal.js web deck.
 
 ### Where the visuals come from
 
 A typed syllabus has no images or charts, so structure is its only source of
-visual richness. `pipeline/visual_planner.py` runs the (previously unused)
-`intelligence` + `visual_specs` engines over each chunk and emits a real
-layout:
+visual richness. `pipeline/visual_planner.py` runs the `intelligence` +
+`visual_specs` engines over each chunk and emits a real layout:
 
 | Detected in the text | Becomes |
 |---|---|
@@ -41,8 +44,12 @@ layout:
 
 This only overrides the layout router when the router produced nothing
 structural, or produced a recognisable placeholder (a flowchart with no node
-data, or a metric literally labelled `Key Stat`). A genuine LLM result is left
-alone.
+data). A genuine LLM result is left alone.
+
+**Nothing is fabricated.** A `TABLE` with no parseable rows and a `METRIC` with
+no readable quantity are both downgraded to plain text rather than rendering an
+invented `Item / Description` grid or the literal words `Key Stat` at headline
+size — both of which used to ship.
 
 ---
 
@@ -75,6 +82,7 @@ learnova/
 ├── src/learnova/                  # ← the library. No UI imports anywhere.
 │   ├── config.py                  # paths, limits, API keys, runtime env flags
 │   ├── logging_config.py
+│   ├── textutils.py               # ← markdown stripping, word-safe trimming, dedupe
 │   ├── parsers/
 │   │   ├── schema.py              # 8 structured dataclasses (rich view)
 │   │   ├── legacy.py              # SlideData / ParsedDocument (flat view, single definition)
@@ -103,6 +111,7 @@ learnova/
 │   ├── visual_specs/              # deterministic visual specification builders
 │   ├── rag/                       # chunker, retriever, embedder
 │   ├── rendering/                 # themes, PPTX builder, web deck, subprocess isolation
+│   │   └── layout.py              # ← content-driven geometry: fits fonts, boxes, grids
 │   └── scoring/                   # engagement scorer
 │
 ├── apps/
@@ -112,12 +121,15 @@ learnova/
 ├── frontend/                      # React + Vite SPA (Clerk auth, routing)
 │   ├── .env                       # VITE_CLERK_PUBLISHABLE_KEY
 │   └── src/
+│       ├── styles.css             # brutalist design system, four accent tokens
 │       ├── pages/                 # Landing · AuthPage · Studio · DeckLibrary
-│       └── components/            # Navbar · Footer · Marquee · PalettePicker · …
+│       └── components/            # Navbar · Footer · Marquee · PalettePicker · Cursor · …
 │
 ├── scripts/                       # verify_day4.py, verify_day5.py, generate_sample.py
 ├── tests/                         # pytest suite + conftest.py + fixtures/
-└── docs/PROGRESS_README.md
+└── docs/
+    ├── PPT_RULES.md               # ← every rule applied, in execution order
+    └── PROGRESS_README.md
 ```
 
 ---
@@ -139,13 +151,18 @@ cp .env.example .env
 Fill in whichever keys you have. **All of them are optional** — with no keys at all the
 pipeline still produces a deck using heuristic layout classification.
 
-| Key | Used for | Required? |
-|-----|----------|-----------|
-| `GROQ_API_KEY` | Fast layout classification | No |
-| `NVIDIA_API_KEY` | Higher-quality rewriting/quizzes + 429 failover | No |
-| `GEMINI_API_KEY` | Image OCR / vision descriptions | No |
-| `VITE_CLERK_PUBLISHABLE_KEY` | Sign-in + per-user deck library | For accounts |
-| `CLERK_SECRET_KEY` | Reserved for server-side Clerk calls | For accounts |
+| Key | Used for | Required? | Notes |
+|-----|----------|-----------|-------|
+| `GROQ_API_KEY` | Layout, diagrams, enhancement | No | Free tier; `gsk_…`. TPM ceiling is 6 000 — the enhancement stage can trip it |
+| `NVIDIA_API_KEY` | Rewriting + quizzes, and 429 failover for everything | No | build.nvidia.com, `nvapi-…` |
+| `GEMINI_API_KEY` | Image OCR / vision descriptions | No | Needed for **scanned** PDFs, which are otherwise rejected |
+| `VITE_CLERK_PUBLISHABLE_KEY` | Sign-in + per-user deck library | For accounts | `pk_…`, safe in the browser |
+| `CLERK_SECRET_KEY` | Server-side Clerk calls | For accounts | `sk_…` — **never** put this in `frontend/.env` |
+
+> A Gemini key that authenticates can still return `429 RESOURCE_EXHAUSTED` on
+> every generation call: listing models does not consume `generateContent`
+> quota, so a key can look valid and have none. If every call 429s with no
+> retry delay, the project needs billing or free-tier quota enabled.
 
 The frontend reads its Clerk key from **`frontend/.env`** (`VITE_` prefix — Vite
 does not expose bare or `NEXT_PUBLIC_` names to the browser). The project-root
@@ -180,8 +197,20 @@ Then open <http://localhost:5173>. Vite proxies `/api` to port 8000, so there is
 python -m pytest -q
 ```
 
-208 passed, 7 skipped. The skips need real API credentials or a PDF
-fixture; run the credentialed ones deliberately with `pytest -m live`.
+**295 passed, 2 skipped, 1 failed.** The skips need a PDF fixture. The failure
+is `test_live_enhance_photosynthesis`, which calls Groq for real and trips the
+free tier's 6 000 tokens-per-minute ceiling — a quota limit, not a defect, but
+it does make a full run non-deterministic. Run the credentialed tests
+deliberately with `pytest -m live`, and everything else with:
+
+```bash
+python -m pytest -q -m "not live"
+```
+
+A full run takes ~13 minutes because several tests exercise the live pipeline.
+`tests/test_content_fidelity.py` is the fast, offline guard over slide-copy
+quality — metric extraction, markdown leakage, restatement, card headings,
+pagination balance — and finishes in under a second.
 
 Verification scripts (write JSON into `.cache/`):
 
@@ -222,12 +251,28 @@ client polls. The 12 stages map directly onto a progress bar.
 accepts one. It tries providers in a task-specific order and falls through on
 429 / timeout / 5xx:
 
-| Task | Preferred | Fallback |
-|------|-----------|----------|
-| Layout classification | Groq (short JSON, high volume) | NVIDIA |
-| Content improvement | NVIDIA (larger model) | Groq |
-| Quiz generation | NVIDIA (better distractors) | Groq |
-| Image description | Gemini Vision | local Tesseract |
+| Task | Preferred | Fallback | Why |
+|------|-----------|----------|-----|
+| Layout classification | Groq `llama-3.1-8b-instant` | NVIDIA `meta/llama-3.1-8b-instruct` | Short JSON, one call per chunk — latency dominates |
+| Diagram generation | Groq `llama-3.1-8b-instant` | NVIDIA `meta/llama-3.1-8b-instruct` | Same shape |
+| Content improvement | NVIDIA `nemotron-3-ultra-550b-a55b` | Groq | Low volume, quality shows |
+| Quiz generation | NVIDIA `nemotron-3-ultra-550b-a55b` | Groq | Distractor quality matters |
+| Enhancement | Groq `llama-3.1-8b-instant` | NVIDIA | **72 calls per run** — see below |
+| Image description | Gemini `gemini-2.5-flash` | native PyMuPDF render | |
+
+**Model choice is a latency budget, not a quality ranking.** Enhancement makes
+six sequential calls per slide across up to twelve slides. On Nemotron Ultra
+(~13 s a call) that is ~15 minutes of wall clock for one deck, so it takes the
+small fast model and leaves NVIDIA as failover. `meta/llama-3.3-70b-instruct`
+was measured at **158 s per call** on this endpoint and is not used anywhere.
+
+Call sites choose a timeout suited to Groq's small models, so the router applies
+a **per-provider floor** on the way out — without it every failover to a large
+NIM model would time out before it could answer.
+
+Gemini's model list is ordered `2.5-flash` first: `2.0-flash` and `1.5-flash`
+are absent from the v1beta catalog, so trying them first burned two guaranteed
+failures per image.
 
 **No OpenAI dependency.** NVIDIA NIM is reached with plain `requests` against its
 OpenAI-compatible endpoint; the `openai` package is not installed or imported.
@@ -273,18 +318,27 @@ are stripped, otherwise each one becomes a junk slide.
 - **AnyDoc does no OCR.** If it returns too little text (a scanned page), the
   native PyMuPDF path takes over, which can render and OCR the page. AnyDoc is
   a required dependency but the pipeline still runs without it.
-- **`LLMRouter` is now used by the enhancement stage** but the older AI modules
-  (`layout_router`, `quiz_gen`, `diagram_gen`) still construct `GroqProvider()`
-  directly, so NVIDIA failover only covers enhancement so far.
+- **Every LLM call now goes through `LLMRouter`.** `layout_router`, `quiz_gen`
+  and `diagram_gen` used to construct `GroqProvider()` directly, so NVIDIA was
+  unreachable from them and a Groq 429 simply lost the work.
 - **Enhancement is LLM-backed**, so it is skipped at `low` density, capped at
-  the first 12 slides, and degrades to plain slides with no provider.
+  the first 12 slides, and degrades to plain slides with no provider. It is the
+  highest-volume stage in the pipeline — six sequential calls per slide, ~72 per
+  run — so it deliberately prefers the *fast* model, not the best one.
+- **Scanned/image-only PDFs are rejected with a clear message** rather than
+  producing a deck whose one content slide reads "Page 1". They need OCR, which
+  needs `GEMINI_API_KEY`. Typed input is exempt from the check — a short outline
+  is deliberate, not a failed extraction.
 - **The job store is in-memory and single-process.** Jobs are lost on restart
   and it will not work across multiple uvicorn workers. Fine for a demo.
 - PPTX/HTML builds run in a **separate interpreter** (`rendering/subprocess_builder.py`)
   to isolate C-extension state; this is what fixed the exit-139 segfaults.
-- The intelligence / enhancement / visual_specs packages are fully tested
-  libraries but are **not yet wired into the runtime pipeline** — they are
-  reachable from `scripts/verify_day4.py` and `scripts/verify_day5.py`.
+- The intelligence / enhancement / visual_specs packages **are** wired into the
+  runtime, via `pipeline/visual_planner.py` (deterministic layout detection) and
+  `pipeline/enhancer.py` (pedagogical extras). `scripts/verify_day4.py` and
+  `verify_day5.py` exercise them standalone.
+- **Quantity parsing covers `$ ₹ € £ ¥` with comma separators.** `USD 250,000`
+  and European decimal-comma notation (`1.234,56`) are not recognised.
 
 ---
 
@@ -315,11 +369,45 @@ build subprocess into *both* the PPTX and the web deck.
 
 Remaining roles (card fill, body text, muted text) are derived, and text colour
 is picked by WCAG relative luminance — so a dark primary never ends up with
-dark text on it.
+dark text on it. The **web deck honours the palette too**; it previously
+hardcoded a navy `#1e2761` throughout while captioning itself "Theme: Custom
+Palette".
 
 PPTX embeds a font *name*, so the viewer needs the font installed; each pairing
 therefore names a safe fallback. `Arial` and `Georgia` are the safest choices
 for decks you will hand to someone else.
+
+---
+
+## 📐 Slide quality
+
+Geometry is **derived from the content**, not hardcoded. `rendering/layout.py`
+measures the text and picks the largest size that fits, stepping down in half
+points and stopping at a legibility floor (11 pt body, 9 pt cards) — below that
+the content paginates instead of shrinking further. Cards in a row share one
+size so the row reads evenly, grids wrap past four per row, and the last row is
+balanced (five items become 3+2, not 4+1).
+
+The content band is computed per slide and shrinks for whichever of the takeaway
+bar and inline quiz band are present, so nothing overlaps.
+
+Copy is normalised through `textutils.py` before it reaches a slide:
+
+| Rule | Why |
+|---|---|
+| Markdown emphasis stripped, including **unbalanced** markers | Extraction cuts sentences mid-emphasis; the remnant rendered as `Strategic Growth:*` |
+| Trimming lands on a word boundary | Character slicing shipped slides ending "The cost of ca" |
+| Restatements dropped | One grid showed a heading and two of its own fragments as three separate cards |
+| Quantities kept whole | A bare `\d+` headlined `$250,000` as **250** |
+| Card headings taken from the content's own `Label:` prefix | Cards read `PILLAR 1`, `STEP 2` — numbering that tells a reader nothing |
+
+**Content survives the LLM.** The layout router used to cap the model's reply at
+`bullets[:4]` while the prompt asked for "only the top 3 to 4 concepts", so
+eight points of source became three before the density stage could paginate
+them. The cap is gone, the prompt says restructure rather than summarise, and —
+because prompting alone does not reliably stop a model summarising — the result
+is diffed against the source and any unrepresented sentence is appended
+verbatim.
 
 ---
 
@@ -343,3 +431,30 @@ figure. `METRIC` and `QUIZ` slides are never split.
 
 Full rule list: **[docs/PPT_RULES.md](docs/PPT_RULES.md)** — every rule applied
 between raw input and finished deck, in execution order.
+
+---
+
+## 🖥️ The web app
+
+A brutalist black-and-amber design system: ultra-condensed display type, hard
+offset shadows, a dotted grid ground and dual-direction marquees.
+
+The accent lives in **four tokens** rather than one, because a single value
+cannot stay legible both as a fill and as text:
+
+| Token | Role |
+|---|---|
+| `--accent` | fills and borders |
+| `--accent-deep` | hover / pressed |
+| `--accent-light` | the accent as text on black panels |
+| `--accent-on` | text sitting on an accent fill |
+
+That split is what makes a palette change safe: swapping the accent inverts the
+whole site from one place. A flat find-and-replace would leave roughly a third
+of the UI unreadable.
+
+`components/Cursor.jsx` replaces the pointer with a dot that swells over
+anything clickable. It falls back to the native cursor on touch devices, under
+`prefers-reduced-motion`, and **inside Clerk's account portal** — that renders
+in its own high-z-index portal where the dot cannot reliably paint, and
+suppressing the native cursor there left no pointer at all.
