@@ -109,33 +109,62 @@ def generate_quizzes(improved_results: list[dict]) -> list[dict]:
     return quizzes
 
 
-def interleave_quizzes_into_slides(improved_results: list[dict], quizzes: list[dict], frequency: int = 4) -> list[dict]:
+def interleave_quizzes_into_slides(
+    improved_results: list[dict],
+    quizzes: list[dict],
+    frequency: int = 4,
+    inline: bool = True,
+) -> list[dict]:
     """
-    Interleaves quiz checkpoint slides into the slide sequence after every `frequency` slides.
+    Attach a checkpoint question after every ``frequency`` slides.
+
+    With ``inline=True`` (the default) the question is fixed to the *bottom of
+    the slide that closes the run* as an ``inline_quiz`` payload, rather than
+    interrupting the deck with a standalone slide. A checkpoint reads better
+    beside the material it tests, and it keeps the slide count honest — the
+    old behaviour inflated a 12-slide deck to 15.
+
+    Passing ``inline=False`` restores the separate QUIZ slide.
     """
     if not quizzes:
         return improved_results
 
-    final_deck = []
+    final_deck: list[dict] = []
     quiz_idx = 0
 
-    for i, slide_item in enumerate(improved_results, 1):
-        final_deck.append(slide_item)
-        if i % frequency == 0 and quiz_idx < len(quizzes):
-            q_data = quizzes[quiz_idx]
+    for position, slide_item in enumerate(improved_results, 1):
+        item = slide_item
+        due = position % frequency == 0 and quiz_idx < len(quizzes)
+
+        if due and inline:
+            q = quizzes[quiz_idx]
             quiz_idx += 1
-            checkpoint_slide = {
+            improved = dict(item.get("improved") or {})
+            improved["inline_quiz"] = {
+                "index": quiz_idx,
+                "question": q.get("question", "What was the key idea in this section?"),
+                "options": q.get("options", [])[:4],
+                "correct": q.get("correct", "A"),
+                "explanation": q.get("explanation", ""),
+            }
+            item = {**item, "improved": improved}
+
+        final_deck.append(item)
+
+        if due and not inline:
+            q = quizzes[quiz_idx]
+            quiz_idx += 1
+            final_deck.append({
                 "original": {"title": "Knowledge Checkpoint", "source": f"Quiz #{quiz_idx}"},
                 "improved": {
                     "layout_type": "QUIZ",
-                    "title": f"⚡ Checkpoint Quiz #{quiz_idx}",
-                    "question": q_data.get("question", "What is the key takeaway from the previous slides?"),
-                    "options": q_data.get("options", ["Option A", "Option B", "Option C", "Option D"]),
-                    "correct": q_data.get("correct", "A"),
-                    "explanation": q_data.get("explanation", "Review previous slide takeaways."),
-                    "takeaway": "Test your active recall!",
-                }
-            }
-            final_deck.append(checkpoint_slide)
+                    "title": f"Checkpoint Quiz #{quiz_idx}",
+                    "question": q.get("question", "What is the key takeaway so far?"),
+                    "options": q.get("options", ["Option A", "Option B", "Option C", "Option D"]),
+                    "correct": q.get("correct", "A"),
+                    "explanation": q.get("explanation", "Review the previous takeaways."),
+                    "takeaway": "Test your active recall.",
+                },
+            })
 
     return final_deck

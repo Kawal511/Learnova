@@ -5,6 +5,7 @@ and embeds PowerPoint OpenXML slide transition animations.
 """
 
 import io
+import re
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
@@ -12,6 +13,7 @@ from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.oxml.xmlchemy import OxmlElement
 
+from learnova.rendering import layout as L
 from learnova.rendering.theme_engine import (
     get_theme, auto_detect_theme, select_slide_layout, resolve_theme,
     ColorPalette, THEMES, LAYOUT_STYLES,
@@ -47,14 +49,16 @@ def _add_header_bar(slide, title_text: str, theme: ColorPalette):
     tf.word_wrap = True
     tf.text = title_text
     p = tf.paragraphs[0]
-    p.font.size = Pt(28)
+    p.font.size = Pt(L.fit_font_size([title_text], 12.3, 0.85, max_pt=28, min_pt=15))
     p.font.bold = True
     p.font.color.rgb = theme.accent_rgb
 
 def _add_takeaway_bar(slide, takeaway_text: str, theme: ColorPalette):
     if not takeaway_text:
         return
-    tkw_box = slide.shapes.add_textbox(Inches(0.5), Inches(6.0), Inches(12.3), Inches(1.1))
+    band = L.takeaway_band()
+    tkw_box = slide.shapes.add_textbox(
+        Inches(band.left), Inches(band.top), Inches(band.width), Inches(band.height))
     tkw_box.fill.solid()
     tkw_box.fill.fore_color.rgb = theme.primary_rgb
     tkw_box.line.color.rgb = theme.accent_rgb
@@ -63,9 +67,10 @@ def _add_takeaway_bar(slide, takeaway_text: str, theme: ColorPalette):
     ttk = tkw_box.text_frame
     ttk.word_wrap = True
     tp = ttk.paragraphs[0]
-    tp.text = f"💡 Key Takeaway: {takeaway_text}"
+    tp.text = f"Key Takeaway: {takeaway_text}"
     tp.font.color.rgb = theme.text_rgb
-    tp.font.size = Pt(15)
+    tp.font.size = Pt(L.fit_font_size(
+        [tp.text], band.width - 0.3, band.height - 0.15, max_pt=15, min_pt=9))
     tp.font.bold = True
 
 def _add_figure_slide(prs, theme: ColorPalette, title_text: str, image_bytes: bytes,
@@ -137,6 +142,76 @@ def _apply_theme_fonts(prs, theme: ColorPalette) -> None:
                         )
 
 
+def _add_inline_quiz(slide, quiz: dict, theme: ColorPalette, has_takeaway: bool) -> None:
+    """
+    Draw a checkpoint question as a band at the foot of the slide.
+
+    Keeping the question beside the material it tests reads better than a
+    standalone quiz slide, and it stops the deck inflating with interruptions.
+    The four options sit in one row so the whole band stays shallow.
+    """
+    band = L.quiz_band(has_takeaway)
+
+    backdrop = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(band.left), Inches(band.top), Inches(band.width), Inches(band.height))
+    backdrop.fill.solid()
+    backdrop.fill.fore_color.rgb = theme.card_bg_rgb
+    backdrop.line.color.rgb = theme.accent_rgb
+    backdrop.line.width = Pt(2)
+    backdrop.text_frame.text = ""
+
+    question = (quiz.get("question") or "").strip()
+    label = f"Q{quiz.get('index', 1)}. {question}"
+
+    q_box = slide.shapes.add_textbox(
+        Inches(band.left + 0.18), Inches(band.top + 0.1),
+        Inches(band.width - 0.36), Inches(0.72))
+    q_tf = q_box.text_frame
+    q_tf.word_wrap = True
+    q_para = q_tf.paragraphs[0]
+    q_para.text = label
+    q_para.font.bold = True
+    q_para.font.color.rgb = theme.text_rgb
+    q_para.font.size = Pt(L.fit_font_size([label], band.width - 0.4, 0.7,
+                                          max_pt=14, min_pt=9))
+
+    options = [str(o).strip() for o in (quiz.get("options") or []) if str(o).strip()][:4]
+    if not options:
+        return
+
+    letters = "ABCD"
+    row_top = band.top + 0.9
+    row_h = band.height - 1.02
+    cells = L.grid_cells(len(options),
+                         L.Box(band.left + 0.18, row_top, band.width - 0.36, row_h),
+                         gap=0.14, max_per_row=4)
+
+    # One size across every option keeps the row visually even.
+    opt_pt = min(
+        L.fit_font_size([o], c.width - 0.2, c.height - 0.08, max_pt=12, min_pt=7)
+        for o, c in zip(options, cells)
+    )
+
+    for i, (option, cell) in enumerate(zip(options, cells)):
+        chip = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Inches(cell.left), Inches(cell.top), Inches(cell.width), Inches(cell.height))
+        chip.fill.solid()
+        chip.fill.fore_color.rgb = theme.bg_rgb
+        chip.line.color.rgb = theme.primary_rgb
+        chip.line.width = Pt(1)
+
+        tf = chip.text_frame
+        tf.word_wrap = True
+        para = tf.paragraphs[0]
+        # Strip any leading "A)" the model already produced, so it is not doubled.
+        clean = re.sub(r"^\s*[A-Da-d][).:]\s*", "", option)
+        para.text = f"{letters[i]}. {clean}"
+        para.font.size = Pt(opt_pt)
+        para.font.color.rgb = theme.text_rgb
+
+
 def build_pptx(slides_data: list[dict], topic_title: str = "Learnova Presentation",
                theme_id: str = "auto", theme_spec: dict | None = None) -> bytes:
     theme = resolve_theme(topic_title, theme_id, theme_spec)
@@ -186,17 +261,49 @@ def build_pptx(slides_data: list[dict], topic_title: str = "Learnova Presentatio
 
         title_text = imp.get("title", orig.get("title", "Presentation Slide"))
         takeaway_text = imp.get("takeaway", "").strip()
+        inline_quiz = imp.get("inline_quiz") or None
+
+        # Geometry is derived per slide: the body shrinks when a takeaway bar
+        # or a checkpoint band is also being drawn, so nothing overlaps.
+        band = L.content_band(has_takeaway=bool(takeaway_text),
+                              has_quiz=bool(inline_quiz))
 
         _add_header_bar(slide, title_text, theme)
 
         # ── 1. TABLE LAYOUT ──────────────────────────────────────────────────
-        if layout_type == "TABLE" and "table_headers" in imp and "table_rows" in imp:
+        if layout_type == "TABLE" and imp.get("table_headers") and imp.get("table_rows"):
             headers = imp.get("table_headers", [])
             rows = imp.get("table_rows", [])
+
+            # Lead-in bullets sit above the grid; the table takes what is left,
+            # so the two never overlap.
+            lead = [str(b).strip() for b in (imp.get("bullets") or []) if str(b).strip()]
+            table_top = band.top
+            if lead:
+                lead_h = min(band.height * 0.4,
+                             L.block_height(lead, band.width - 0.3, 13.0) + 0.1)
+                lead_box = slide.shapes.add_textbox(
+                    Inches(band.left), Inches(band.top),
+                    Inches(band.width), Inches(lead_h))
+                ltf = lead_box.text_frame
+                ltf.word_wrap = True
+                lead_pt = L.fit_font_size(lead, band.width - 0.3, lead_h,
+                                          max_pt=14, min_pt=9)
+                for i, line in enumerate(lead):
+                    lp = ltf.add_paragraph() if i else ltf.paragraphs[0]
+                    lp.text = line
+                    lp.font.size = Pt(lead_pt)
+                    lp.font.color.rgb = theme.text_rgb
+                table_top = band.top + lead_h + 0.12
+
             if headers and rows:
                 num_rows = len(rows) + 1
                 num_cols = len(headers)
-                tbl_shape = slide.shapes.add_table(num_rows, num_cols, Inches(0.8), Inches(1.4), Inches(11.73), Inches(4.3))
+                avail_h = max(0.6, band.top + band.height - table_top)
+                tbl_shape = slide.shapes.add_table(
+                    num_rows, num_cols,
+                    Inches(band.left), Inches(table_top),
+                    Inches(band.width), Inches(min(avail_h, num_rows * 0.42 + 0.3)))
                 tbl = tbl_shape.table
 
                 # Format Header Row
@@ -228,7 +335,12 @@ def build_pptx(slides_data: list[dict], topic_title: str = "Learnova Presentatio
             metric_lbl = imp.get("metric_label", title_text)
             metric_desc = imp.get("metric_desc", takeaway_text)
 
-            box = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(2), Inches(1.6), Inches(9.33), Inches(4.0))
+            m_w = min(9.33, band.width)
+            m_h = min(4.0, band.height)
+            box = slide.shapes.add_shape(
+                MSO_SHAPE.ROUNDED_RECTANGLE,
+                Inches(band.left + (band.width - m_w) / 2), Inches(band.top),
+                Inches(m_w), Inches(m_h))
             box.fill.solid()
             box.fill.fore_color.rgb = theme.primary_rgb
             box.line.color.rgb = theme.accent_rgb
@@ -300,12 +412,20 @@ def build_pptx(slides_data: list[dict], topic_title: str = "Learnova Presentatio
             bullets = imp.get("bullets", [])
 
             steps = bullets if bullets else ["Step 1: Initiation", "Step 2: Execution", "Step 3: Completion"]
-            step_count = len(steps[:4])
-            card_w = Inches(11.5 / max(1, step_count))
+            steps = [s for s in steps if str(s).strip()][:6]
+            cells = L.grid_cells(len(steps), band, max_per_row=4)
+            # One shared size so every card in the row reads evenly.
+            step_pt = min(
+                L.fit_font_size([s], c.width - 0.3, c.height - 0.9,
+                                max_pt=L.MAX_CARD_PT, min_pt=L.MIN_CARD_PT)
+                for s, c in zip(steps, cells)
+            ) if steps else L.MAX_CARD_PT
 
-            for idx, step_text in enumerate(steps[:4]):
-                c_left = Inches(0.8) + idx * (card_w + Inches(0.2))
-                card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, c_left, Inches(1.8), card_w, Inches(3.8))
+            for idx, (step_text, cell) in enumerate(zip(steps, cells)):
+                card = slide.shapes.add_shape(
+                    MSO_SHAPE.ROUNDED_RECTANGLE,
+                    Inches(cell.left), Inches(cell.top),
+                    Inches(cell.width), Inches(cell.height))
                 card.fill.solid()
                 card.fill.fore_color.rgb = theme.primary_rgb if idx % 2 == 0 else theme.card_bg_rgb
                 card.line.color.rgb = theme.primary_rgb
@@ -322,19 +442,26 @@ def build_pptx(slides_data: list[dict], topic_title: str = "Learnova Presentatio
 
                 sp2 = ctf.add_paragraph()
                 sp2.text = step_text
-                sp2.font.size = Pt(16)
+                sp2.font.size = Pt(step_pt)
                 sp2.font.color.rgb = theme.text_rgb
 
         # ── 5. CARD GRID LAYOUT ──────────────────────────────────────────────
         elif layout_type == "CARD_GRID":
             bullets = imp.get("bullets", [])
-            items = bullets[:4] if bullets else ["Pillar 1", "Pillar 2", "Pillar 3"]
-            count = len(items)
-            card_w = Inches(11.5 / max(1, count))
+            items = [b for b in (bullets or []) if str(b).strip()][:6] or [
+                "Pillar 1", "Pillar 2", "Pillar 3"]
+            cells = L.grid_cells(len(items), band, max_per_row=4)
+            card_pt = min(
+                L.fit_font_size([i], c.width - 0.3, c.height - 0.8,
+                                max_pt=L.MAX_CARD_PT, min_pt=L.MIN_CARD_PT)
+                for i, c in zip(items, cells)
+            )
 
-            for idx, item_text in enumerate(items):
-                c_left = Inches(0.8) + idx * (card_w + Inches(0.2))
-                card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, c_left, Inches(1.8), card_w, Inches(3.8))
+            for idx, (item_text, cell) in enumerate(zip(items, cells)):
+                card = slide.shapes.add_shape(
+                    MSO_SHAPE.ROUNDED_RECTANGLE,
+                    Inches(cell.left), Inches(cell.top),
+                    Inches(cell.width), Inches(cell.height))
                 card.fill.solid()
                 card.fill.fore_color.rgb = theme.card_bg_rgb
                 card.line.color.rgb = theme.primary_rgb
@@ -351,38 +478,48 @@ def build_pptx(slides_data: list[dict], topic_title: str = "Learnova Presentatio
 
                 sp2 = ctf.add_paragraph()
                 sp2.text = item_text
-                sp2.font.size = Pt(15)
+                sp2.font.size = Pt(card_pt)
                 sp2.font.color.rgb = theme.text_rgb
 
         # ── 6. DEFAULT / MINIMAL TEXT + IMAGE COLUMN LAYOUT ───────────────────
         else:
-            has_img = "image" in orig and orig["image"] and orig["image"].get("bytes")
-            text_left = Inches(0.5)
-            text_width = Inches(7.2) if has_img else Inches(12.3)
+            has_img = bool(orig.get("image") and orig["image"].get("bytes"))
+            text_area, image_area = L.split_text_image(band, has_img)
 
-            bullets = imp.get("bullets", [])
-            body_box = slide.shapes.add_textbox(text_left, Inches(1.3), text_width, Inches(4.5))
+            bullets = [str(b).replace("▪", "").strip()
+                       for b in (imp.get("bullets") or []) if str(b).strip()]
+
+            body_box = slide.shapes.add_textbox(
+                Inches(text_area.left), Inches(text_area.top),
+                Inches(text_area.width), Inches(text_area.height))
             btf = body_box.text_frame
             btf.word_wrap = True
 
-            for i, bullet in enumerate(bullets):
-                clean_b = bullet.replace("▪", "").strip()
+            # One size for the whole list, chosen so every bullet fits the band.
+            body_pt = L.fit_font_size(bullets, text_area.width - 0.35,
+                                      text_area.height - 0.1,
+                                      max_pt=L.MAX_BODY_PT, min_pt=L.MIN_BODY_PT)
+
+            for i, clean_b in enumerate(bullets):
                 p = btf.add_paragraph() if i > 0 else btf.paragraphs[0]
                 p.text = clean_b
-                p.font.size = Pt(18)
+                p.font.size = Pt(body_pt)
                 p.font.color.rgb = theme.text_rgb
-                p.space_after = Pt(10)
+                p.space_after = Pt(max(4, body_pt * 0.45))
                 pPr = p._p.get_or_add_pPr()
                 SubElement(pPr, "a:buChar", char="•")
 
-            if has_img and orig["image"].get("bytes"):
+            if has_img:
                 try:
                     slide.shapes.add_picture(
                         io.BytesIO(orig["image"]["bytes"]),
-                        Inches(7.9), Inches(1.3), width=Inches(4.9)
-                    )
+                        Inches(image_area.left), Inches(image_area.top),
+                        width=Inches(image_area.width))
                 except Exception:
                     pass
+
+        if inline_quiz:
+            _add_inline_quiz(slide, inline_quiz, theme, bool(takeaway_text))
 
         _add_takeaway_bar(slide, takeaway_text, theme)
 

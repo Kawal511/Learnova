@@ -148,29 +148,63 @@ def split_sections(markdown: str, max_level: int = 2) -> List[Dict[str, Any]]:
         }
         for s in sections
     ]
-    return _merge_repeated_titles(built)
+    return _merge_repeated_titles(_inherit_missing_titles(built))
+
+
+# A merged section beyond this size stops being one topic and becomes an
+# unreadable dump, so merging stops and a fresh part is started.
+_MAX_MERGED_SECTION_CHARS = 1800
 
 
 def _merge_repeated_titles(sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Fold consecutive sections sharing a title into one.
+    Fold consecutive sections sharing a title into one topic.
 
     A multi-page PDF repeats its chapter heading on every page, so each page
-    became its own slide with an identical title. Merging them gives one
-    topic, which the density stage then paginates into ``Topic (2/4)`` — a
-    numbered run instead of four slides that look duplicated.
+    became its own slide with an identical title. Merging gives one topic that
+    the density stage paginates into ``Topic (2/4)`` — a numbered run rather
+    than pages that look duplicated.
+
+    Merging is capped: past ``_MAX_MERGED_SECTION_CHARS`` a new section starts,
+    so an entire chapter does not collapse into a single overloaded slide.
     """
     merged: List[Dict[str, Any]] = []
     for section in sections:
         title = (section.get("title") or "").strip()
-        if merged and title and title.lower() == (merged[-1].get("title") or "").strip().lower():
+        body = section.get("text", "").strip()
+
+        if merged and title:
             previous = merged[-1]
-            body = section.get("text", "").strip()
-            if body:
-                previous["text"] = f"{previous['text'].rstrip()}\n{body}".strip()
-            continue
+            same_title = title.lower() == (previous.get("title") or "").strip().lower()
+            room = len(previous.get("text", "")) + len(body) <= _MAX_MERGED_SECTION_CHARS
+            if same_title and room:
+                if body:
+                    previous["text"] = f"{previous['text'].rstrip()}\n{body}".strip()
+                continue
+
         merged.append(dict(section))
     return merged
+
+
+def _inherit_missing_titles(sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Give untitled sections the previous real heading instead of "Page 10".
+
+    A PDF page whose heading did not survive extraction produced a slide
+    titled by its page number, which tells a reader nothing. Continuing the
+    previous topic is both truer and more useful.
+    """
+    out: List[Dict[str, Any]] = []
+    last_title = ""
+    for section in sections:
+        item = dict(section)
+        title = (item.get("title") or "").strip()
+        if (not title or re.fullmatch(r"(page|section|slide)\s*\d+", title, re.I)) and last_title:
+            item["title"] = last_title
+        elif title:
+            last_title = title
+        out.append(item)
+    return out
 
 
 def sections_to_parsed_dicts(sections: List[Dict[str, Any]]) -> List[dict]:

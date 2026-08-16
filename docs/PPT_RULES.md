@@ -13,6 +13,8 @@ order it runs. Anything not listed here is not enforced.
 | Size ceiling | 50 MB (`MAX_FILE_SIZE_MB`); larger uploads are rejected with `413` |
 | Text extraction | AnyDoc first; native PyMuPDF / python-pptx parsers on failure |
 | Scanned pages | AnyDoc does no OCR. Under 200 characters of output, the native parser takes over so the page can be rendered and OCR'd |
+| Multi-column PDFs | Detected from block x-spread on the first 4 pages. AnyDoc has no column awareness and interleaves the columns into nonsense, so these route to the native parser, which sorts blocks per column before reading |
+| Reading order | Full-width blocks keep their vertical position; column blocks are read left column fully, then right |
 | Image extraction | Always native — markdown cannot carry bytes, and AnyDoc has no document model for PDF |
 | Image placeholders | AnyDoc's bare `image.png` lines are stripped; left in, each becomes a junk slide |
 | Caching | Markdown is cached by SHA-256 of file bytes; re-running the same file skips conversion |
@@ -25,6 +27,10 @@ order it runs. Anything not listed here is not enforced.
 | Deeper headings | `###` and below stay inside their parent section |
 | Pre-heading content | Text before the first heading becomes its own leading section |
 | Typed input | Gets a synthetic `##` heading if none is present, so sectioning has an anchor |
+| Junk headings | A "heading" that ends on an operator with `=`, is <40% letters, repeats one word (`Conclusion: Conclusion:`), or runs past 12 words is demoted to body text. PDF extractors promote formula fragments, which make useless titles |
+| Residual markers | `#` prefixes are stripped from body lines, which otherwise rendered as literal `### Topic` bullet text |
+| Missing titles | A section titled only `Page 10` inherits the previous real heading |
+| Repeated headings | Consecutive sections sharing a title merge into one topic, capped at 1800 characters so a whole chapter cannot collapse into one overloaded slide |
 
 ## 3. Chunking
 
@@ -36,6 +42,8 @@ order it runs. Anything not listed here is not enforced.
 | Tables | `[TABLE DATA]` blocks are never split mid-row |
 | Long paragraphs | Split at 180 words; a paragraph under that is passed through verbatim so line structure survives |
 | Images | Attached to the **first** chunk of a unit only — otherwise the renderer emits one duplicate figure slide per paragraph |
+| One section, one slide | Chunks of a section are merged back before rendering. Without this, a 22-paragraph section became 22 near-empty slides sharing one title |
+| Sentence splitting | Prose splits on `.!?` only when the period is not a decimal (`3.14`), a single initial (`J. Smith`), or a known abbreviation (`no.`, `fig.`, `vs.`). Splitting naively turned "Total no. of observations" into two meaningless bullets |
 
 ## 4. Image anchoring
 
@@ -55,7 +63,7 @@ Each chunk is assigned exactly one layout:
 | Layout | Chosen when |
 |---|---|
 | `FLOWCHART` | Process/step/sequence language detected |
-| `TABLE` | Comparison, versus, pros-and-cons language |
+| `TABLE` | Real pipe-delimited rows are present, **or** a whole-word comparison cue (`vs`, `versus`, `comparison`, `difference between`). Substring matching previously routed any text containing "table" or the letters "vs" to a table |
 | `METRIC` | Percentages or quantities detected |
 | `CARD_GRID` | Several distinct parallel concepts |
 | `MINIMAL_TEXT` | Everything else |
@@ -63,6 +71,12 @@ Each chunk is assigned exactly one layout:
 The LLM router runs first; on failure (bad key, quota, timeout) a keyword
 heuristic produces the same shape. **Neither path truncates content** — bullet
 budgets are applied later, by the density stage.
+
+**No fabricated tables.** If a slide is classified `TABLE` but no real rows can
+be parsed from the text, it is downgraded to `MINIMAL_TEXT`. The old fallback
+invented a one-row `Item / Description` grid, which looked broken on a slide.
+Likewise a table continuation page that has run out of rows becomes
+`MINIMAL_TEXT`, since a table branch with nothing to draw rendered blank.
 
 ## 6. Deterministic visual planning
 
@@ -126,7 +140,9 @@ meaning when broken across slides.
 
 **Per-layout splitting**
 
-- **Table** — rows are paginated, the header repeats on every part.
+- **Table** — rows are paginated, the header repeats on every part. Lead-in
+  bullets paginate alongside them rather than being capped; capping deleted
+  content, which the continuity contract forbids.
 - **Flowchart** — split into stages, never mid-step. Each continuation gets a
   rebuilt Mermaid chain for just its own steps, rather than reusing the
   whole-diagram code.
@@ -135,11 +151,21 @@ meaning when broken across slides.
 
 ## 9. Quizzes
 
+Checkpoints are rendered **inline, at the foot of the slide that closes the
+run** — not as separate slides. A question reads better beside the material it
+tests, and the deck no longer inflates with interruptions (a 12-slide deck used
+to become 15).
+
 | Rule | Detail |
 |---|---|
-| Frequency | A checkpoint slide every N slides (user-set, 2–6) |
+| Frequency | Attached after every N slides (user-set, 2–6) |
+| Placement | A band above the takeaway bar: question line, then four options in a single row |
+| Options | Capped at four; a model-supplied `A)` prefix is stripped so letters are not doubled |
+| Slide count | Unchanged — inline quizzes add no slides |
+| Body area | The content band shrinks by the quiz band height, so nothing overlaps |
 | Source | Generated from the improved slide content |
-| Failure | An empty quiz list never costs the deck — the deck falls back to the un-interleaved slides |
+| Failure | An empty quiz list never costs the deck |
+| Separate slides | Still available via `interleave_quizzes_into_slides(..., inline=False)` |
 
 ## 10. Theme, palette and typography
 
@@ -160,12 +186,29 @@ meaning when broken across slides.
 | Slide size | 13.33 × 7.5 in (16:9) |
 | Structure | Title slide → content slides → closing slide |
 | Header band | 0 → 1.1 in, filled with the primary colour |
-| Content band | 1.3 → 5.6 in |
-| Takeaway bar | 6.0 → 7.1 in, only when takeaway text exists |
+| Content band | **Computed per slide**, not fixed: starts at 1.35 in and ends above whichever of the takeaway bar and quiz band are present |
+| Takeaway bar | 1.05 in tall at the foot, only when takeaway text exists |
+| Quiz band | 2.05 in, directly above the takeaway bar, only when a checkpoint is attached |
 | Figure slides | An image on a non-`MINIMAL_TEXT` layout gets its own slide immediately after, since those layouts fill their content band |
 | Transitions | OpenXML push transition on every slide |
 | Isolation | PPTX and HTML are built in a **separate interpreter** to contain C-extension state |
 | Build failure | Degrades to an in-process build; a failed artifact never fails the whole run |
+
+### Dynamic sizing
+
+Boxes and cards are measured from their content rather than being fixed
+rectangles, so short text no longer floats in a mostly empty box and long text
+no longer spills past the edge.
+
+| Rule | Detail |
+|---|---|
+| Font fitting | The largest size at which the text fits is chosen, stepping down in half-points |
+| Legibility floor | Body stops at 11 pt, cards at 9 pt. Below that the content is paginated instead of shrunk further |
+| Ceilings | Body 22 pt, cards 18 pt, slide title 28 pt (title floors at 15 pt) |
+| Uniform sizing | All cards in a row share one size — the smallest that fits any of them — so the row reads evenly |
+| Card grids | Wrap past 4 per row and use the vertical space; the last row is balanced (5 items become 3+2, not 4+1) |
+| Text + image | The body splits into a text column and a 38% image column; with no image the text takes the full width |
+| Measurement | An estimate (0.52 × point size per glyph, 1.28 line height), deliberately conservative so the error lands on "slightly small" rather than "overflowing". PowerPoint does the final shaping |
 
 ## 12. Ownership and persistence
 

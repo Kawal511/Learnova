@@ -199,28 +199,42 @@ def paginate_slide(entry: dict, profile: DensityProfile,
 
     # ── Tables: split rows, repeat the header on every part ──────────────────
     if layout == "TABLE" and improved.get("table_rows"):
-        pages = _chunk(list(improved["table_rows"]), profile.max_table_rows)
-        # A table slide can also carry lead-in bullets. They are budgeted too,
-        # otherwise a table kept dozens of untrimmed bullets even at low
-        # density, since only the rows were being paginated.
+        row_pages = _chunk(list(improved["table_rows"]), profile.max_table_rows)
+
+        # A table slide can also carry lead-in bullets. They are paginated
+        # alongside the rows rather than capped — capping silently deleted
+        # content, which the whole continuity contract forbids.
         lead = [trim_bullet(b, profile) for b in (improved.get("bullets") or [])]
-        lead = [b for b in lead if b][: profile.max_bullets]
-        return [
-            {
+        lead = [b for b in lead if b]
+        lead_pages = _chunk(lead, profile.max_bullets) if lead else []
+
+        total = max(len(row_pages), len(lead_pages), 1)
+        out = []
+        for i in range(total):
+            rows = row_pages[i] if i < len(row_pages) else []
+            page_bullets = lead_pages[i] if i < len(lead_pages) else []
+            page = {
+                **improved,
+                "title": _title_for_part(title, i, total),
+                "table_rows": rows,
+                "bullets": page_bullets,
+                "takeaway": takeaway if i == total - 1 else "",
+                "continued": i > 0,
+            }
+            # A continuation page with no rows left is not a table. Leaving it
+            # typed TABLE renders a blank slide, because the table branch has
+            # nothing to draw and never falls through to the bullets.
+            if not rows:
+                page["layout_type"] = "MINIMAL_TEXT"
+                page.pop("table_headers", None)
+                page.pop("table_rows", None)
+            out.append({
                 **entry,
-                "improved": {
-                    **improved,
-                    "title": _title_for_part(title, i, len(pages)),
-                    "table_rows": rows,
-                    "bullets": lead if i == 0 else [],
-                    "takeaway": takeaway if i == len(pages) - 1 else "",
-                    "continued": i > 0,
-                },
+                "improved": page,
                 # Only the first part keeps the figure, so it is not duplicated.
                 "original": original if i == 0 else {**original, "image": None},
-            }
-            for i, rows in enumerate(pages)
-        ]
+            })
+        return out
 
     # ── Flowcharts: split into stages, never mid-step ────────────────────────
     if layout in {"FLOWCHART", "PROCESS_DIAGRAM"} and improved.get("bullets"):

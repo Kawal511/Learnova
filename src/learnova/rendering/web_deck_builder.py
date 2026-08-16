@@ -5,10 +5,34 @@ Supports live interactive quizzes, flowcharts, tables, metric cards, and smooth 
 """
 
 import html
+import re
 import json
 from learnova.rendering.theme_engine import (
     get_theme, auto_detect_theme, select_slide_layout, resolve_theme, THEMES,
 )
+
+def _inline_quiz_html(quiz: dict, theme) -> str:
+    """Render a checkpoint question as a band at the foot of a web-deck slide."""
+    if not quiz:
+        return ""
+    options = [str(o).strip() for o in (quiz.get("options") or []) if str(o).strip()][:4]
+    letters = "ABCD"
+    chips = "".join(
+        f'<div style="flex:1 1 0;min-width:0;border:1px solid {theme.primary_hex};'
+        f'background:{theme.bg_hex};color:{theme.text_hex};padding:6px 10px;'
+        f'font-size:0.62em;border-radius:6px;">'
+        f'<b>{letters[i]}.</b> {html.escape(re.sub(r"^\s*[A-Da-d][).:]\s*", "", opt))}</div>'
+        for i, opt in enumerate(options)
+    )
+    return f"""
+    <div style="margin-top:18px;border:2px solid {theme.accent_hex};
+                background:{theme.card_bg_hex};border-radius:10px;padding:12px 14px;">
+      <div style="color:{theme.text_hex};font-weight:700;font-size:0.72em;margin-bottom:8px;">
+        Q{quiz.get('index', 1)}. {html.escape(str(quiz.get('question', '')))}
+      </div>
+      <div style="display:flex;gap:8px;">{chips}</div>
+    </div>"""
+
 
 def _font_query(theme) -> str:
     """Build the Google Fonts family query for the theme's chosen typefaces."""
@@ -151,7 +175,7 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
         # Takeaway section
         takeaway_html = f"""
         <div style="background:#1e2761; color:#fff; border-left:4px solid #ccff00; padding:12px; font-size:0.9rem; margin-top:20px; text-align:left; border-radius:4px;">
-            💡 <strong>Key Takeaway:</strong> {takeaway_text}
+            <strong>Key Takeaway:</strong> {takeaway_text}
         </div>
         """ if takeaway_text else ""
 
@@ -163,6 +187,7 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
                 <span style="background:#ccff00; color:#000; padding:4px 10px; font-weight:bold; font-size:0.8rem; border:1px solid #000;">{layout_type}</span>
             </div>
             {slide_body}
+            {_inline_quiz_html(imp.get("inline_quiz"), theme)}
             {takeaway_html}
         </section>
         """)

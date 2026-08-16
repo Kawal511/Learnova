@@ -209,19 +209,55 @@ def split_sentences(text: str) -> list[str]:
     return sentences
 
 
+def parse_pipe_table(text: str) -> tuple[list, list]:
+    """
+    Extract a real ``| a | b |`` table from text. Returns ([], []) if absent.
+
+    Only genuine tabular rows qualify. Previously any mention of "table" or
+    "vs" routed a slide to the TABLE layout, which then fabricated a one-row
+    placeholder — a fake table is worse than a plain bullet list.
+    """
+    rows = []
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped.count("|") < 2:
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        # Markdown separator row (---|---).
+        if all(set(c) <= set("-: ") and c for c in cells):
+            continue
+        if any(cells):
+            rows.append(cells)
+
+    if len(rows) < 2:
+        return [], []
+
+    width = max(len(r) for r in rows)
+    rows = [r + [""] * (width - len(r)) for r in rows]
+    return rows[0], rows[1:]
+
+
 def _heuristic_layout_type(text: str) -> str:
     lower = text.lower()
+
     process_kw = [
-        "step 1", "first,", "second,", "process", "workflow", "cycle",
-        "algorithm", "sequence", "pipeline", "stage", "mechanism", "flow",
+        r"step\s*1", r"\bfirst,", r"\bsecond,", r"\bprocess\b", r"\bworkflow\b",
+        r"\bcycle\b", r"\balgorithm\b", r"\bsequence\b", r"\bpipeline\b",
+        r"\bstage\b", r"\bmechanism\b", r"\bworkflow\b",
     ]
-    if any(kw in lower for kw in process_kw):
+    if any(re.search(kw, lower) for kw in process_kw):
         return "FLOWCHART"
+
+    # A table needs real rows, or an explicit whole-word comparison cue —
+    # not a stray "vs" inside another word or a passing mention of "table".
+    if parse_pipe_table(text)[1]:
+        return "TABLE"
     table_kw = [
-        "vs", "versus", "comparison", "compare", "pros and cons",
-        "difference", "advantages", "table", "feature",
+        r"\bvs\.?\b", r"\bversus\b", r"\bcomparison\b", r"\bcompared?\b",
+        r"\bpros and cons\b", r"\bdifference between\b",
+        r"\badvantages and disadvantages\b",
     ]
-    if any(kw in lower for kw in table_kw):
+    if any(re.search(kw, lower) for kw in table_kw):
         return "TABLE"
     if re.search(r"\b\d+(?:\.\d+)?%|\b\d+\s*(?:percent|million|billion|k|x)\b", lower):
         return "METRIC"
@@ -261,8 +297,15 @@ def _build_fallback(text: str, current_title: str, layout_type: str) -> dict:
                 f"graph TD\n  A[{safe_t}] --> B[Execute Steps] --> C[Key Outcome]"
             )
     elif layout_type == "TABLE":
-        result["table_headers"] = ["Item", "Description"]
-        result["table_rows"] = [["Key Concept", str(text[:80])]]
+        headers, rows = parse_pipe_table(text)
+        if rows:
+            result["table_headers"] = headers
+            result["table_rows"] = rows
+        else:
+            # No real table in the text. A fabricated one-row "Item /
+            # Description" table looks broken on a slide, so present the
+            # content as ordinary bullets instead.
+            result["layout_type"] = "MINIMAL_TEXT"
     elif layout_type == "METRIC":
         result["metric_value"] = "Key Stat"
         result["metric_label"] = current_title or "Metric"
