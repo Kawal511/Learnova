@@ -203,7 +203,7 @@ def generate(
     from learnova.pipeline.density import apply_density, get_profile
     from learnova.pipeline.enhancer import enhance_deck
     from learnova.pipeline.visual_planner import enrich_deck
-    from learnova.rag.chunker import chunk_parsed_data
+    from learnova.rag.chunker import chunk_parsed_data, merge_chunks_by_section
     from learnova.rendering.subprocess_builder import build_html_safe, build_pptx_safe
     from learnova.scoring.scorer import score_all_slides
 
@@ -235,7 +235,10 @@ def generate(
         )
         if attached:
             logger.info("anchored %d image(s) to their matching sections", attached)
-        result.chunks = chunk_parsed_data(result.parsed_units)
+        # One section becomes one slide; the density stage decides how much
+        # fits and paginates the rest. Without this, a 22-paragraph section
+        # produced 22 near-empty slides sharing one title.
+        result.chunks = merge_chunks_by_section(chunk_parsed_data(result.parsed_units))
         return len(result.chunks)
 
     runner.run("chunk", _chunk, critical=True)

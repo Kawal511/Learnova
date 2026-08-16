@@ -200,6 +200,11 @@ def paginate_slide(entry: dict, profile: DensityProfile,
     # ── Tables: split rows, repeat the header on every part ──────────────────
     if layout == "TABLE" and improved.get("table_rows"):
         pages = _chunk(list(improved["table_rows"]), profile.max_table_rows)
+        # A table slide can also carry lead-in bullets. They are budgeted too,
+        # otherwise a table kept dozens of untrimmed bullets even at low
+        # density, since only the rows were being paginated.
+        lead = [trim_bullet(b, profile) for b in (improved.get("bullets") or [])]
+        lead = [b for b in lead if b][: profile.max_bullets]
         return [
             {
                 **entry,
@@ -207,6 +212,7 @@ def paginate_slide(entry: dict, profile: DensityProfile,
                     **improved,
                     "title": _title_for_part(title, i, len(pages)),
                     "table_rows": rows,
+                    "bullets": lead if i == 0 else [],
                     "takeaway": takeaway if i == len(pages) - 1 else "",
                     "continued": i > 0,
                 },

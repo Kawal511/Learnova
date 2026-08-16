@@ -166,6 +166,49 @@ def _chunk_paragraph(para: str, title: str, source: int,
     return chunks
 
 
+def merge_chunks_by_section(chunks: list[dict]) -> list[dict]:
+    """
+    Collapse the chunks of one source section back into a single chunk.
+
+    Chunking splits a section into paragraph-sized pieces for retrieval, but
+    the renderer makes **one slide per chunk** — so a section with 22
+    paragraphs became 22 near-empty slides all sharing the same title.
+
+    A section is one topic and should therefore be one slide. The density
+    stage then decides how much fits and paginates the remainder onto
+    numbered continuation slides, which is where that decision belongs.
+    """
+    merged: dict = {}
+    order: list = []
+
+    for chunk in chunks:
+        key = chunk.get("source")
+        if key is None:
+            key = chunk.get("title", "")
+        if key not in merged:
+            merged[key] = dict(chunk)
+            order.append(key)
+            continue
+
+        target = merged[key]
+        extra = (chunk.get("text") or "").strip()
+        if extra:
+            target["text"] = f"{(target.get('text') or '').rstrip()}\n{extra}"
+        # Keep the first image seen for the section.
+        if "image" not in target and chunk.get("image"):
+            target["image"] = chunk["image"]
+
+    out = []
+    for index, key in enumerate(order):
+        item = merged[key]
+        item["id"] = index
+        out.append(item)
+
+    if len(out) != len(chunks):
+        logger.info("merged %d chunk(s) into %d section slide(s)", len(chunks), len(out))
+    return out
+
+
 def chunk_parsed_data(parsed_data: list[dict]) -> list[dict]:
     """
     Convert parsed slides/pages into structured text chunks.

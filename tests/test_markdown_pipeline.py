@@ -45,10 +45,15 @@ class TestSectionSplitting:
         assert sections[1]["title"] == "Chapter 2: Comparison of Stages"
 
     def test_deeper_headings_stay_inside_their_section(self):
+        """A sub-heading stays in its parent section, but loses its '#' markers.
+
+        Left in, the literal "### Nested" rendered as bullet text on the slide.
+        """
         md = "## Top\n### Nested\n- a\n## Second\n- b\n"
         sections = split_sections(md, max_level=2)
         assert len(sections) == 2
-        assert "### Nested" in sections[0]["text"]
+        assert "Nested" in sections[0]["text"]
+        assert "###" not in sections[0]["text"]
 
     def test_content_before_first_heading_is_kept(self):
         sections = split_sections("intro prose\n\n## Real Heading\n- x\n", max_level=2)

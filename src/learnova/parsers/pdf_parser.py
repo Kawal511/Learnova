@@ -83,6 +83,68 @@ def _extract_tables_from_page(page) -> List[str]:
     return table_texts
 
 
+def detect_columns(blocks: List[dict], page_width: float) -> int:
+    """
+    Count text columns on a page from the horizontal spread of its blocks.
+
+    A worksheet or academic handout is often laid out in two columns. Read in
+    naive top-to-bottom order, the two columns interleave and the text becomes
+    nonsense ("Sample A: 10, 12 Step 2: To calculate ... Sample B: 14, 15").
+    Detecting the split lets us read each column fully before moving on.
+    """
+    if page_width <= 0:
+        return 1
+
+    mid = page_width / 2
+    left = right = spanning = 0
+
+    for block in blocks:
+        bbox = block.get("bbox")
+        if not bbox:
+            continue
+        x0, x1 = bbox[0], bbox[2]
+        width = x1 - x0
+        if width > page_width * 0.62:      # crosses the gutter
+            spanning += 1
+        elif x1 < mid * 1.06:
+            left += 1
+        elif x0 > mid * 0.94:
+            right += 1
+
+    sided = left + right
+    # Two columns only when both sides are populated and few blocks span the
+    # gutter — otherwise a single wide column with a stray narrow block wins.
+    if sided >= 4 and left >= 2 and right >= 2 and spanning <= sided * 0.5:
+        return 2
+    return 1
+
+
+def _reading_order(blocks: List[dict], page_width: float) -> List[dict]:
+    """
+    Sort blocks into human reading order, column-aware.
+
+    Full-width blocks (titles, banners) act as horizontal rules: they keep
+    their vertical position, while column blocks are grouped left-then-right
+    within the band they belong to.
+    """
+    if detect_columns(blocks, page_width) < 2:
+        return sorted(blocks, key=lambda b: (round(b.get("bbox", [0, 0])[1], 1),
+                                             b.get("bbox", [0, 0])[0]))
+
+    mid = page_width / 2
+
+    def key(block):
+        bbox = block.get("bbox", [0, 0, 0, 0])
+        x0, y0, x1 = bbox[0], bbox[1], bbox[2]
+        if (x1 - x0) > page_width * 0.62:
+            column = 0                      # spanning: sorts with the left band
+        else:
+            column = 1 if x1 < mid * 1.06 else 2
+        return (column, round(y0, 1), x0)
+
+    return sorted(blocks, key=key)
+
+
 def _page_to_structured_text(page) -> Tuple[str, str]:
     """
     Extract text from a PDF page using dict mode for full layout awareness.
@@ -92,14 +154,14 @@ def _page_to_structured_text(page) -> Tuple[str, str]:
     """
     page_dict = page.get_text("dict", sort=True)
     avg_size = _avg_body_font_size(page_dict)
+    page_width = float(getattr(page.rect, "width", 0) or 0)
 
     detected_title = ""
     paragraphs = []
 
-    for block in page_dict.get("blocks", []):
-        if block.get("type") != 0:
-            continue
+    text_blocks = [b for b in page_dict.get("blocks", []) if b.get("type") == 0]
 
+    for block in _reading_order(text_blocks, page_width):
         block_lines_text = []
         block_is_heading = False
 

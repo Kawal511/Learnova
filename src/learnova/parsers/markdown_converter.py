@@ -69,6 +69,39 @@ class MarkdownDocument:
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 
 
+def is_junk_heading(text: str) -> bool:
+    """
+    True when a detected heading is really content, not a section title.
+
+    PDF extractors promote anything visually prominent to a heading, so a
+    formula fragment on a worksheet ("No. of groups = k =", "|XA - XB| =")
+    or a stray repeated label ("Conclusion: Conclusion:") becomes a slide
+    title. These make terrible titles and fragment the deck.
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return True
+
+    # Ends on an operator, or is mostly symbols/digits rather than words.
+    if stripped.endswith(("=", "+", "-", "/", "*", ":")) and "=" in stripped:
+        return True
+
+    letters = sum(ch.isalpha() for ch in stripped)
+    if letters < max(3, len(stripped) * 0.4):
+        return True
+
+    # Same word repeated back to back ("Conclusion: Conclusion:").
+    words = [w.strip(":;,.").lower() for w in stripped.split() if w.strip(":;,.")]
+    if len(words) >= 2 and len(set(words)) == 1:
+        return True
+
+    # A heading is a label, not a paragraph.
+    if len(words) > 12:
+        return True
+
+    return False
+
+
 def split_sections(markdown: str, max_level: int = 2) -> List[Dict[str, Any]]:
     """
     Split markdown on headings of ``max_level`` or shallower.
@@ -83,6 +116,11 @@ def split_sections(markdown: str, max_level: int = 2) -> List[Dict[str, Any]]:
     for line in markdown.splitlines():
         match = _HEADING_RE.match(line.strip())
         if match and len(match.group(1)) <= max_level:
+            # A junk heading stays as body text rather than starting a section,
+            # so formula fragments never become slide titles.
+            if is_junk_heading(match.group(2)):
+                current["body"].append(match.group(2).strip())
+                continue
             if current["title"] or any(l.strip() for l in current["body"]):
                 sections.append(current)
             current = {
@@ -96,14 +134,43 @@ def split_sections(markdown: str, max_level: int = 2) -> List[Dict[str, Any]]:
     if current["title"] or any(l.strip() for l in current["body"]):
         sections.append(current)
 
-    return [
+    built = [
         {
             "title": s["title"],
             "level": s["level"],
-            "text": "\n".join(s["body"]).strip(),
+            # Strip residual '#' markers so sub-headings render as plain
+            # bullets instead of literal "### Topic" text on the slide.
+            "text": "\n".join(
+                _HEADING_RE.sub(r"\2", line.strip()) if _HEADING_RE.match(line.strip())
+                else line
+                for line in s["body"]
+            ).strip(),
         }
         for s in sections
     ]
+    return _merge_repeated_titles(built)
+
+
+def _merge_repeated_titles(sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Fold consecutive sections sharing a title into one.
+
+    A multi-page PDF repeats its chapter heading on every page, so each page
+    became its own slide with an identical title. Merging them gives one
+    topic, which the density stage then paginates into ``Topic (2/4)`` — a
+    numbered run instead of four slides that look duplicated.
+    """
+    merged: List[Dict[str, Any]] = []
+    for section in sections:
+        title = (section.get("title") or "").strip()
+        if merged and title and title.lower() == (merged[-1].get("title") or "").strip().lower():
+            previous = merged[-1]
+            body = section.get("text", "").strip()
+            if body:
+                previous["text"] = f"{previous['text'].rstrip()}\n{body}".strip()
+            continue
+        merged.append(dict(section))
+    return merged
 
 
 def sections_to_parsed_dicts(sections: List[Dict[str, Any]]) -> List[dict]:
@@ -256,6 +323,39 @@ def strip_asset_placeholders(markdown: str) -> str:
     ]
     cleaned = "\n".join(kept)
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
+def is_multi_column_pdf(path: str, sample_pages: int = 4) -> bool:
+    """
+    True when a PDF is laid out in columns on most of its sampled pages.
+
+    AnyDoc reads a page in raw order with no column awareness, so a two-column
+    worksheet comes back with the columns interleaved into nonsense. Our native
+    parser sorts blocks per column, so it must win for these documents.
+    """
+    try:
+        import fitz
+
+        from learnova.parsers.pdf_parser import detect_columns
+    except ImportError:
+        return False
+
+    try:
+        with fitz.open(path) as doc:
+            pages = min(sample_pages, len(doc))
+            if not pages:
+                return False
+            multi = 0
+            for index in range(pages):
+                page = doc[index]
+                blocks = [b for b in page.get_text("dict").get("blocks", [])
+                          if b.get("type") == 0]
+                if detect_columns(blocks, float(page.rect.width)) >= 2:
+                    multi += 1
+        return multi >= max(1, pages // 2)
+    except Exception as exc:
+        logger.debug("column detection failed for %s: %s", path, exc)
+        return False
 
 
 def _convert_with_anydoc(path: str) -> Optional[str]:
@@ -412,7 +512,13 @@ def convert_to_markdown(
             assets=assets,
         )
 
-    if prefer_anydoc:
+    # AnyDoc has no column awareness, so a multi-column PDF must go native.
+    use_anydoc = prefer_anydoc
+    if use_anydoc and ext == ".pdf" and is_multi_column_pdf(str(file_path)):
+        logger.info("%s is multi-column — using the column-aware native parser", name)
+        use_anydoc = False
+
+    if use_anydoc:
         markdown = _convert_with_anydoc(str(file_path))
         if markdown:
             if use_cache:

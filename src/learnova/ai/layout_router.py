@@ -144,6 +144,71 @@ def _extract_json(raw: str) -> Optional[dict]:
 
 # ── Heuristic fallback ────────────────────────────────────────────────────────
 
+# Abbreviations whose trailing period does not end a sentence. Splitting on a
+# bare "." turned "Total no. of observations" into "Total no" / "of
+# observations" — two meaningless bullets from one clear statement.
+_ABBREVIATIONS = (
+    "no", "nos", "fig", "eq", "vs", "etc", "approx", "e.g", "i.e", "cf",
+    "dr", "mr", "mrs", "ms", "prof", "sr", "jr", "st", "vol", "ch", "sec",
+    "min", "max", "avg", "std", "dept", "univ", "inc", "ltd", "co",
+)
+
+_ABBREV_SET = {a.replace(".", "") for a in _ABBREVIATIONS}
+
+# Candidate sentence end: terminal punctuation followed by whitespace. Whether
+# it is a *real* end is decided per match, because Python's `re` only supports
+# fixed-width look-behind and the abbreviation list is variable width.
+_SENTENCE_CANDIDATE = re.compile(r"[.!?](?=\s)")
+
+_TRAILING_TOKEN = re.compile(r"([A-Za-z0-9.]+)$")
+
+
+def _is_real_sentence_end(text: str, position: int) -> bool:
+    before = text[:position]
+    after = text[position + 1:].lstrip()
+
+    # A new sentence does not start with a lowercase letter.
+    if after and after[0].islower():
+        return False
+
+    match = _TRAILING_TOKEN.search(before)
+    if not match:
+        return True
+    token = match.group(1)
+
+    # Decimal number: "3.14" or a numbered label like "n1."
+    if token and token[-1].isdigit():
+        return False
+    # Single capital initial: "J. Smith"
+    if len(token) == 1 and token.isupper():
+        return False
+    # Known abbreviation: "no.", "fig.", "vs."
+    if token.replace(".", "").lower() in _ABBREV_SET:
+        return False
+    return True
+
+
+def split_sentences(text: str) -> list[str]:
+    """Split prose into sentences without breaking abbreviations or decimals."""
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    if not cleaned:
+        return []
+
+    sentences, start = [], 0
+    for match in _SENTENCE_CANDIDATE.finditer(cleaned):
+        if not _is_real_sentence_end(cleaned, match.start()):
+            continue
+        piece = cleaned[start:match.start() + 1].strip(" .;:")
+        if piece:
+            sentences.append(piece)
+        start = match.end()
+
+    tail = cleaned[start:].strip(" .;:")
+    if tail:
+        sentences.append(tail)
+    return sentences
+
+
 def _heuristic_layout_type(text: str) -> str:
     lower = text.lower()
     process_kw = [
@@ -171,7 +236,7 @@ def _build_fallback(text: str, current_title: str, layout_type: str) -> dict:
     if len(lines) > 1:
         items = lines
     else:
-        items = [s.strip() for s in text.split(".") if s.strip()]
+        items = split_sentences(text)
 
     # Do NOT cap here. The density stage owns per-slide budgets and moves any
     # overflow onto continuation slides; truncating at this point would delete
