@@ -23,9 +23,7 @@ export default function Navbar({ variant = "auto" }) {
 
   return (
     <nav className={`nav${isTop ? " is-top" : ""}`}>
-      <Link to="/" className="nav-logo">LEARN
-        <br />OVA
-      </Link>
+      <Link to="/" className="nav-logo">LEARNOVA</Link>
 
       {onLanding ? (
         <div className="nav-links">

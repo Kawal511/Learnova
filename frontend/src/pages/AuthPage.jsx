@@ -3,7 +3,9 @@ import Footer from "../components/Footer.jsx";
 import Navbar from "../components/Navbar.jsx";
 
 // Clerk's card is restyled to match the brutalist shell: square corners,
-// black borders, lime primary button.
+// black borders, amber primary button. Clerk renders in its own tree and
+// takes plain values, not CSS custom properties — these must stay literals and
+// be kept in step with the --accent tokens in styles.css.
 const clerkAppearance = {
   variables: {
     colorPrimary: "#000000",
@@ -22,7 +24,7 @@ const clerkAppearance = {
       letterSpacing: "0.06em",
     },
     formButtonPrimary: {
-      background: "#ccff00",
+      background: "#ffbd00",
       color: "#000",
       border: "3px solid #000",
       borderRadius: 0,
@@ -31,7 +33,7 @@ const clerkAppearance = {
       letterSpacing: "0.12em",
       fontWeight: 600,
       boxShadow: "none",
-      "&:hover": { background: "#b8e600" },
+      "&:hover": { background: "#cc9700" },
     },
     socialButtonsBlockButton: { borderRadius: 0, border: "2px solid #000" },
     formFieldInput: { borderRadius: 0, border: "2px solid #000" },

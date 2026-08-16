@@ -30,16 +30,18 @@ class ColorPalette:
 
 # ── 10 Curated Professional Color Palettes ────────────────────────────────────
 THEMES = {
+    # The id is load-bearing: saved decks store it in their metadata, so it
+    # stays "brutalist_neon" regardless of the accent colour.
     "brutalist_neon": ColorPalette(
         id="brutalist_neon",
-        name="Brutalist Neon (Default)",
-        description="High-contrast black & neon lime accent for modern tech presentations.",
+        name="Brutalist Amber (Default)",
+        description="High-contrast black & neon amber accent for modern tech presentations.",
         bg_hex="#ffffff",
         bg_rgb=RGBColor(255, 255, 255),
         primary_hex="#000000",
         primary_rgb=RGBColor(0, 0, 0),
-        accent_hex="#ccff00",
-        accent_rgb=RGBColor(204, 255, 0),
+        accent_hex="#ffbd00",
+        accent_rgb=RGBColor(255, 189, 0),
         card_bg_hex="#f7f9fa",
         card_bg_rgb=RGBColor(247, 249, 250),
         text_hex="#1a1a1a",
@@ -364,7 +366,7 @@ def build_custom_theme(
     by luminance so a dark primary never ends up with black text on it.
     """
     primary = _normalise_hex(primary_hex, "#000000")
-    accent = _normalise_hex(secondary_hex, "#ccff00")
+    accent = _normalise_hex(secondary_hex, "#ffbd00")
     background = _normalise_hex(background_hex, "#ffffff")
 
     body_text = readable_text_hex(background)
@@ -441,7 +443,7 @@ def resolve_theme(topic_title: str, theme_id: str = "auto",
     if theme_spec and (theme_spec.get("primary") or theme_spec.get("secondary")):
         return build_custom_theme(
             primary_hex=theme_spec.get("primary", "#000000"),
-            secondary_hex=theme_spec.get("secondary", "#ccff00"),
+            secondary_hex=theme_spec.get("secondary", "#ffbd00"),
             background_hex=theme_spec.get("background", "#ffffff"),
             font_id=theme_spec.get("font_id", DEFAULT_FONT_ID),
             name=theme_spec.get("name", "Custom Palette"),

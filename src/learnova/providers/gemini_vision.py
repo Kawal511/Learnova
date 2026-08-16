@@ -48,8 +48,12 @@ class GeminiVisionProvider(VisionProvider):
             logger.warning("Could not open image with PIL in provider: %s", e)
             raise ValueError(f"Could not open image with PIL: {e}")
 
+        # gemini-2.5-flash leads because it is the model current keys actually
+        # serve: 2.0-flash and 1.5-flash are absent from the v1beta catalog, so
+        # trying them first burned two failed round-trips per image before
+        # reaching the one that works.
         models_to_try = kwargs.get(
-            "models_to_try", ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
+            "models_to_try", ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
         )
         max_retries = kwargs.get("max_retries", 2)
         response = None

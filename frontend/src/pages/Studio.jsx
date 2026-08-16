@@ -186,7 +186,7 @@ export default function Studio() {
                 onChange={(e) => setTypedText(e.target.value)}
               />
               <button
-                className="btn btn-sm btn-lime"
+                className="btn btn-sm btn-accent"
                 onClick={onUseTyped}
                 disabled={busy || !typedText.trim()}
                 type="button"
@@ -286,7 +286,7 @@ export default function Studio() {
                   />Vision OCR
                 </label>
                 <button
-                  className="btn btn-lime"
+                  className="btn btn-accent"
                   onClick={onGenerate}
                   disabled={busy}
                   type="button"

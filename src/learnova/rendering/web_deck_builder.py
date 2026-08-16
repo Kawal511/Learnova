@@ -84,7 +84,7 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
         if layout_type == "TABLE" and "table_headers" in imp:
             headers = imp.get("table_headers", [])
             rows = imp.get("table_rows", [])
-            th_cells = "".join(f"<th style='background-color:#1e2761; color:#ccff00; padding:12px;'>{html.escape(str(h))}</th>" for h in headers)
+            th_cells = "".join(f"<th style='background-color:#1e2761; color:#ffbd00; padding:12px;'>{html.escape(str(h))}</th>" for h in headers)
             tr_rows = ""
             for r in rows:
                 tds = "".join(f"<td style='padding:10px; border-bottom:1px solid #ddd;'>{html.escape(str(val))}</td>" for val in r)
@@ -106,8 +106,8 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
             metric_desc = html.escape(str(imp.get("metric_desc", takeaway_text)))
 
             slide_body = f"""
-            <div style="background:#1e2761; border:4px solid #ccff00; border-radius:12px; padding:40px; text-align:center; color:#fff; margin-top:20px;">
-                <h1 style="font-size:4.5rem; color:#ccff00; margin:0;">{metric_val}</h1>
+            <div style="background:#1e2761; border:4px solid #ffbd00; border-radius:12px; padding:40px; text-align:center; color:#fff; margin-top:20px;">
+                <h1 style="font-size:4.5rem; color:#ffbd00; margin:0;">{metric_val}</h1>
                 <h3 style="color:#cadcfc; text-transform:uppercase; margin:10px 0;">{metric_lbl}</h3>
                 <p style="font-size:1.2rem; color:#fff;">{metric_desc}</p>
             </div>
@@ -174,7 +174,7 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
 
         # Takeaway section
         takeaway_html = f"""
-        <div style="background:#1e2761; color:#fff; border-left:4px solid #ccff00; padding:12px; font-size:0.9rem; margin-top:20px; text-align:left; border-radius:4px;">
+        <div style="background:#1e2761; color:#fff; border-left:4px solid #ffbd00; padding:12px; font-size:0.9rem; margin-top:20px; text-align:left; border-radius:4px;">
             <strong>Key Takeaway:</strong> {takeaway_text}
         </div>
         """ if takeaway_text else ""
@@ -184,7 +184,7 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
         <section data-transition="slide" style="text-align:left;">
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:3px solid #1e2761; padding-bottom:10px;">
                 <h2 style="color:#1e2761; font-family:'{theme.heading_font}', sans-serif; font-size:2.2rem; margin:0; text-transform:uppercase;">{title_text}</h2>
-                <span style="background:#ccff00; color:#000; padding:4px 10px; font-weight:bold; font-size:0.8rem; border:1px solid #000;">{layout_type}</span>
+                <span style="background:#ffbd00; color:#000; padding:4px 10px; font-weight:bold; font-size:0.8rem; border:1px solid #000;">{layout_type}</span>
             </div>
             {slide_body}
             {_inline_quiz_html(imp.get("inline_quiz"), theme)}
@@ -246,7 +246,7 @@ def build_web_deck(slides_data: list[dict], topic_title: str = "Learnova Interac
             const exp = parent.parentElement.querySelector('.quiz-exp');
             
             if (isCorrect) {{
-                btn.style.backgroundColor = '#ccff00';
+                btn.style.backgroundColor = '#ffbd00';
                 btn.style.color = '#000000';
                 feedback.style.display = 'block';
                 feedback.style.backgroundColor = '#d4edda';

@@ -13,7 +13,8 @@ import os
 import re
 import time
 from dotenv import load_dotenv
-from learnova.providers import GroqProvider
+from learnova.providers.base import LLMProvider
+from learnova.providers.router import TASK_QUIZ, get_router
 from learnova.logging_config import logger
 
 load_dotenv()
@@ -27,17 +28,22 @@ SYSTEM_PROMPT = (
     '{"question": "...", "options": ["A) ...", "B) ...", "C) ...", "D) ..."], "correct": "A", "explanation": "..."}'
 )
 
-# Module-level singleton GroqProvider — created once and reused.
-# Avoids creating/destroying httpx pools which causes macOS segfaults.
-_quiz_provider: GroqProvider | None = None
+# Module-level singleton router — created once and reused. Avoids
+# creating/destroying httpx pools, which causes macOS segfaults.
+#
+# Distractor quality is what makes a checkpoint worth answering, so TASK_QUIZ
+# prefers Nemotron Ultra and falls back to Groq. Going through the router also
+# means a Groq 429 no longer costs the deck its quizzes.
+_quiz_provider: LLMProvider | None = None
 
-def _get_quiz_provider() -> GroqProvider | None:
+def _get_quiz_provider() -> LLMProvider | None:
     global _quiz_provider
     if _quiz_provider is None:
-        try:
-            _quiz_provider = GroqProvider(timeout=10.0)
-        except Exception as e:
-            logger.warning("Could not initialize Groq client for quizzes: %s", e)
+        router = get_router()
+        if not router.available:
+            logger.warning("No LLM provider configured — skipping quiz generation.")
+            return None
+        _quiz_provider = router
     return _quiz_provider
 
 
@@ -85,10 +91,10 @@ def generate_quizzes(improved_results: list[dict]) -> list[dict]:
             raw_content = provider.generate(
                 prompt=f"Content:\n{combined_content}",
                 system_prompt=SYSTEM_PROMPT,
-                model="llama-3.1-8b-instant",
+                task=TASK_QUIZ,          # router picks the model per provider
                 temperature=0.3,
                 max_tokens=400,
-                timeout=10.0,
+                timeout=20.0,
             )
             parsed = _parse_llm_json(raw_content)
 

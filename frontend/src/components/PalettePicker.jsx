@@ -3,7 +3,7 @@ import { useId } from "react";
 // Ready-made pairings, so a user can start from a good combination instead of
 // hunting for two colours that work together.
 export const PRESETS = [
-  { name: "Brutalist Neon", primary: "#000000", secondary: "#ccff00", background: "#ffffff" },
+  { name: "Brutalist Amber", primary: "#000000", secondary: "#ffbd00", background: "#ffffff" },
   { name: "Midnight Cyber", primary: "#1e293b", secondary: "#38bdf8", background: "#0f172a" },
   { name: "Emerald Academic", primary: "#047857", secondary: "#6ee7b7", background: "#064e3b" },
   { name: "Swiss Red", primary: "#18181b", secondary: "#ef4444", background: "#ffffff" },

@@ -81,7 +81,7 @@ export default function DeckLibrary() {
         ) : decks.length === 0 ? (
           <div className="empty">
             <p style={{ marginTop: 0 }}>You haven't generated any decks yet.</p>
-            <Link to="/studio" className="btn btn-lime btn-sm">OPEN STUDIO
+            <Link to="/studio" className="btn btn-accent btn-sm">OPEN STUDIO
             </Link>
           </div>
         ) : (
@@ -119,7 +119,7 @@ export default function DeckLibrary() {
                 <div className="deck-actions">
                   {deck.has_pptx ? (
                     <button
-                      className="btn btn-sm btn-lime"
+                      className="btn btn-sm btn-accent"
                       type="button"
                       onClick={() => download(deck, "pptx")}
                     >PPTX

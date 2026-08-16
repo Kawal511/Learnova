@@ -31,7 +31,13 @@ TASK_PREFERENCE: Dict[str, Sequence[str]] = {
     TASK_LAYOUT: ("groq", "nvidia"),
     TASK_IMPROVE: ("nvidia", "groq"),
     TASK_QUIZ: ("nvidia", "groq"),
-    TASK_ENHANCE: ("nvidia", "groq"),
+    # Enhancement is the highest-volume LLM stage in the pipeline: six
+    # sequential calls per slide across up to MAX_ENHANCED_SLIDES slides, so 72
+    # calls in a full run. At ~13 s per Nemotron Ultra call that is 15 minutes
+    # of wall clock, and the payload is short-form ("give me one analogy") where
+    # a small model is already good enough. Latency wins here; NVIDIA stays as
+    # the failover for when Groq hits its TPM ceiling.
+    TASK_ENHANCE: ("groq", "nvidia"),
     TASK_DIAGRAM: ("groq", "nvidia"),
 }
 
@@ -44,13 +50,25 @@ TASK_MODEL: Dict[str, Dict[str, str]] = {
         TASK_ENHANCE: "llama-3.1-8b-instant",
         TASK_DIAGRAM: "llama-3.1-8b-instant",
     },
+    # Quality-sensitive tasks run on Nemotron 3 Ultra (550B MoE, 55B active).
+    # High-volume tasks stay on a small instruct model: Ultra answers a layout
+    # classification in ~13 s against Llama-3.1-8B's ~1 s, and the layout stage
+    # runs once per chunk. `meta/llama-3.3-70b-instruct` was measured at 158 s
+    # per call on this endpoint and is not usable as a failover target.
     "nvidia": {
         TASK_LAYOUT: "meta/llama-3.1-8b-instruct",
-        TASK_IMPROVE: "meta/llama-3.3-70b-instruct",
-        TASK_QUIZ: "meta/llama-3.3-70b-instruct",
-        TASK_ENHANCE: "meta/llama-3.3-70b-instruct",
+        TASK_IMPROVE: "nvidia/nemotron-3-ultra-550b-a55b",
+        TASK_QUIZ: "nvidia/nemotron-3-ultra-550b-a55b",
+        TASK_ENHANCE: "nvidia/nemotron-3-ultra-550b-a55b",
         TASK_DIAGRAM: "meta/llama-3.1-8b-instruct",
     },
+}
+
+# Call sites choose their timeout for Groq's small, fast models. A large NIM
+# model needs longer, so a provider floor is applied on the way out — without
+# it every failover to Nemotron Ultra would time out before it could answer.
+PROVIDER_MIN_TIMEOUT: Dict[str, float] = {
+    "nvidia": 90.0,
 }
 
 
@@ -142,6 +160,10 @@ class LLMRouter(LLMProvider):
                 model = TASK_MODEL.get(name, {}).get(task)
                 if model:
                     call_kwargs["model"] = model
+
+            floor = PROVIDER_MIN_TIMEOUT.get(name)
+            if floor:
+                call_kwargs["timeout"] = max(float(call_kwargs.get("timeout") or 0), floor)
             try:
                 return call(provider, call_kwargs)
             except Exception as exc:

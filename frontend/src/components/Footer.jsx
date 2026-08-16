@@ -21,9 +21,7 @@ export default function Footer() {
         </div>
 
         <div className="footer-brand">
-          <div className="footer-logo">LEARN
-            <br />OVA
-          </div>
+          <div className="footer-logo">LEARNOVA</div>
           <div className="footer-tag">AI Presentation Transformation Engine</div>
         </div>
 

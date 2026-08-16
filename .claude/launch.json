@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "learnova-api",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "apps.api.main:app", "--port", "8000"],
+      "port": 8000
+    },
+    {
+      "name": "learnova-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
+      "port": 5173
+    }
+  ]
+}

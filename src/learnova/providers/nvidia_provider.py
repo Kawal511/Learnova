@@ -35,7 +35,9 @@ class NvidiaProvider(LLMProvider):
         self,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        timeout: float = 30.0,
+        # Large NIM models (Nemotron Ultra) answer in ~15-60 s; the old 30 s
+        # default cut them off mid-generation.
+        timeout: float = 90.0,
         default_model: str = DEFAULT_MODEL,
     ):
         self.api_key = api_key or get_nvidia_key()

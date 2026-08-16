@@ -19,25 +19,28 @@ from dotenv import load_dotenv
 
 from learnova.ai.diagram_gen import generate_mermaid_diagram
 from learnova.logging_config import logger
-from learnova.providers import GroqProvider
+from learnova.providers.base import LLMProvider
+from learnova.providers.router import TASK_LAYOUT, get_router
 
 load_dotenv()
 
 # ── Module-level singleton ────────────────────────────────────────────────────
-# Avoids creating/destroying httpx connection pools per chunk (macOS segfault fix)
-_groq_provider: Optional[GroqProvider] = None
+# Avoids creating/destroying httpx connection pools per chunk (macOS segfault
+# fix). The router keeps Groq first for this task — classification runs once per
+# chunk, so latency dominates — and falls through to NVIDIA NIM on a 429.
+_llm_provider: Optional[LLMProvider] = None
 
 
-def _get_groq_provider(timeout: float = 8.0) -> Optional[GroqProvider]:
-    """Return a cached GroqProvider, or None if GROQ_API_KEY is missing."""
-    global _groq_provider
-    if _groq_provider is None:
-        try:
-            _groq_provider = GroqProvider(timeout=timeout)
-        except Exception as e:
-            logger.warning("Could not initialise GroqProvider: %s", e)
+def _get_llm_provider() -> Optional[LLMProvider]:
+    """Return the cached router, or None when no API key is configured."""
+    global _llm_provider
+    if _llm_provider is None:
+        router = get_router()
+        if not router.available:
+            logger.warning("No LLM provider configured — using heuristic layouts.")
             return None
-    return _groq_provider
+        _llm_provider = router
+    return _llm_provider
 
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
@@ -313,28 +316,32 @@ def _build_fallback(text: str, current_title: str, layout_type: str) -> dict:
     return result
 
 
-# ── Groq call helper ──────────────────────────────────────────────────────────
+# ── LLM call helper ───────────────────────────────────────────────────────────
 
-def _call_groq(
+def _call_llm(
     prompt: str,
     system_prompt: str,
     max_tokens: int = 300,
     timeout: float = 8.0,
 ) -> Optional[str]:
     """
-    Single Groq API call. Returns raw response string or None on failure.
-    Raises ValueError with 'rate_limit' if quota is exceeded.
+    Single classification call through the router. Returns the raw response
+    string or None on failure.
+
+    Raises ValueError with 'rate_limit' only when *every* provider is
+    exhausted — the router fails over first, so a Groq 429 alone no longer
+    trips the circuit breaker and drops the whole deck to heuristics.
     """
     global _groq_rate_limited
-    provider = _get_groq_provider(timeout=timeout)
+    provider = _get_llm_provider()
     if provider is None:
-        raise ValueError("GroqProvider not available")
+        raise ValueError("No LLM provider available")
 
     try:
         raw = provider.generate(
             prompt=prompt,
             system_prompt=system_prompt,
-            model="llama-3.1-8b-instant",
+            task=TASK_LAYOUT,        # router picks the model per provider
             temperature=0.2,
             max_tokens=max_tokens,
             timeout=timeout,
@@ -345,7 +352,8 @@ def _call_groq(
         if any(kw in err_str for kw in ("429", "rate_limit", "quota", "tokens per")):
             _groq_rate_limited = True
             logger.warning(
-                "Groq TPM quota hit — switching to local heuristic for all remaining chunks"
+                "All providers rate-limited — switching to local heuristic for "
+                "all remaining chunks"
             )
             raise ValueError("rate_limit")
         raise
@@ -380,7 +388,7 @@ def classify_and_structure_chunk(text: str, current_title: str = "") -> dict:
         raw1: Optional[str] = None
 
         try:
-            raw1 = _call_groq(user_prompt, SYSTEM_PROMPT, max_tokens=300)
+            raw1 = _call_llm(user_prompt, SYSTEM_PROMPT, max_tokens=300)
         except ValueError as ve:
             if "rate_limit" in str(ve):
                 raise  # propagate to outer except → heuristic fallback
@@ -405,7 +413,7 @@ def classify_and_structure_chunk(text: str, current_title: str = "") -> dict:
             )
             raw2: Optional[str] = None
             try:
-                raw2 = _call_groq(retry_prompt, RETRY_SYSTEM_PROMPT, max_tokens=200)
+                raw2 = _call_llm(retry_prompt, RETRY_SYSTEM_PROMPT, max_tokens=200)
             except Exception as e:
                 logger.warning("[%s] Attempt 2 API error: %s", stage, e)
 

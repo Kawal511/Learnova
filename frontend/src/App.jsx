@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { SignedIn, SignedOut, useAuth } from "@clerk/clerk-react";
 import * as api from "./api";
+import Cursor from "./components/Cursor.jsx";
 import AuthPage from "./pages/AuthPage.jsx";
 import DeckLibrary from "./pages/DeckLibrary.jsx";
 import Landing from "./pages/Landing.jsx";
@@ -44,6 +45,7 @@ function Protected({ children }) {
 export default function App() {
   return (
     <AuthBridge>
+      <Cursor />
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/sign-in/*" element={<AuthPage mode="sign-in" />} />

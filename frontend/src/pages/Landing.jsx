@@ -72,7 +72,7 @@ export default function Landing() {
         </p>
 
         <div className="hero-cta">
-          <Link to="/studio" className="btn btn-lime">OPEN STUDIO
+          <Link to="/studio" className="btn btn-accent">OPEN STUDIO
           </Link>
           <a href="#features" className="btn">SEE FEATURES
           </a>
@@ -81,7 +81,7 @@ export default function Landing() {
 
       {/* ── Dual marquees ────────────────────────────────────────────────── */}
       <Marquee items={MARQUEE_TOP} variant="dark" />
-      <Marquee items={MARQUEE_BOTTOM} variant="lime" reverse />
+      <Marquee items={MARQUEE_BOTTOM} variant="accent" reverse />
 
       {/* ── Intro ────────────────────────────────────────────────────────── */}
       <section id="intro" className="section section-dark dotgrid on-dark">
@@ -94,14 +94,14 @@ export default function Landing() {
             <h2 className="display section-title">YOUR SLIDE
               <br />
               <span className="outline-word">REDESIGN</span>
-              <br />ENGINE.®
+              <br />ENGINE.
             </h2>
             <p className="intro-copy">Unlike template galleries, Learnova reads your <strong>content</strong>. It
               extracts steps, statistics, comparisons and hierarchies, then decides which
               visual each one deserves — and builds it. Upload a deck, paste a syllabus,
               or drop in a textbook PDF.
             </p>
-            <Link to="/studio" className="btn btn-lime" style={{ marginTop: 26 }}>START BUILDING
+            <Link to="/studio" className="btn btn-accent" style={{ marginTop: 26 }}>START BUILDING
             </Link>
           </div>
 
@@ -179,7 +179,7 @@ export default function Landing() {
             </ul>
             <Marquee
               items={["PARSING", "INTELLIGENCE", "VISUAL SPECS", "RENDERING", "EXPORT"]}
-              variant="lime"
+              variant="accent"
             />
           </div>
 
@@ -196,7 +196,7 @@ export default function Landing() {
               <label htmlFor="cmsg">Message</label>
               <textarea id="cmsg" placeholder="Enter your message here..." />
             </div>
-            <button type="submit" className="btn btn-lime" style={{ width: "100%" }}>SEND MESSAGE
+            <button type="submit" className="btn btn-accent" style={{ width: "100%" }}>SEND MESSAGE
             </button>
             <p className="form-note">Demo form — not wired to a mail service yet.
             </p>

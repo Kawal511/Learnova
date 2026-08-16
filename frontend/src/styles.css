@@ -1,14 +1,42 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   Learnova design system — brutalist neon.
-   Black + lime, ultra-condensed display type, hard offset shadows,
+   Learnova design system — brutalist amber.
+   Black + neon amber, ultra-condensed display type, hard offset shadows,
    dotted grid ground, dual-direction marquees.
+
+   The accent is split into four tokens rather than one, because no single
+   value reads both as a fill and as text. Amber is a *light* colour: it takes
+   black text on top, and it is the text colour itself on black panels. On a
+   white ground it is near-invisible (1.7:1), so accent-coloured text on white
+   is deliberately absent — it appears there only inside .outline-word, where a
+   black stroke supplies the contrast.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @import url("https://fonts.googleapis.com/css2?family=Anton&family=Archivo:wght@400;500;600;700&family=Oswald:wght@400;500;600;700&display=swap");
 
 :root {
-  --lime: #ccff00;
-  --lime-dim: #b8e600;
+  /* The brand amber. */
+  --accent: #ffbd00;
+  /* Same hue, 25% darker — hover and pressed states. */
+  --accent-deep: #cc9700;
+  /* Same hue, lifted — the accent as *text* on black panels. */
+  --accent-light: #ffd54a;
+  /* Text and icons sitting on top of an --accent fill. Amber is light, so
+     this is black; it was white while the accent was a dark red. */
+  --accent-on: #000000;
+
+  /* Custom cursor, on the site's own black/amber two-tone. It inverts on
+     hover exactly as the nav login and feature cells do: ink fill with an
+     amber edge becomes an amber fill with a hard black edge.
+
+     Both states carry a contrasting ring on purpose — the page runs white
+     sections against near-black ones, and a single-colour dot goes invisible
+     on one or the other. The ring is what survives both grounds.
+
+     Alpha: idle 30% transparent, hover 3%. */
+  --cursor: rgba(20, 20, 20, 0.7);
+  --cursor-ring: #ffbd00;
+  --cursor-active: rgba(255, 189, 0, 0.97);
+  --cursor-active-ring: #000000;
   --ink: #000000;
   --paper: #ffffff;
   --panel: #f7f7f4;
@@ -45,6 +73,69 @@ body {
 a {
   color: inherit;
   text-decoration: none;
+}
+
+/* ── Custom cursor ───────────────────────────────────────────────────────────
+   The class is added by Cursor.jsx only on a fine pointer with motion allowed,
+   so touch users and reduced-motion users keep the native cursor. Hiding it
+   unconditionally in CSS would leave them with no pointer at all. */
+.has-custom-cursor,
+.has-custom-cursor * {
+  cursor: none !important;
+}
+
+/* Clerk renders its account popover and profile modal into its own portal,
+   above the page. Fighting that with a higher z-index is a race we cannot win
+   against a third party, and losing it means no cursor at all: the rule above
+   has already suppressed the native one. So those surfaces get the real cursor
+   back, and Cursor.jsx hides the dot while the pointer is inside them —
+   exactly one pointer either way. Clerk prefixes every class with `cl-`; the
+   app itself uses no such class, so this cannot catch our own UI. */
+.has-custom-cursor [class*="cl-"],
+.has-custom-cursor [class*="cl-"] * {
+  cursor: auto !important;
+}
+
+.has-custom-cursor [class*="cl-"] a,
+.has-custom-cursor [class*="cl-"] button,
+.has-custom-cursor [class*="cl-"] [role="button"] {
+  cursor: pointer !important;
+}
+
+.cursor-dot {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--cursor);
+  box-shadow: 0 0 0 2px var(--cursor-ring);
+  pointer-events: none;
+  z-index: 9999;
+  /* Only the hover swell is animated. Position is set per frame and must not
+     be eased, or the dot would trail the real pointer. */
+  transition: width 0.18s cubic-bezier(0.2, 0.8, 0.2, 1),
+              height 0.18s cubic-bezier(0.2, 0.8, 0.2, 1),
+              background-color 0.18s ease,
+              box-shadow 0.18s ease,
+              opacity 0.2s ease;
+  mix-blend-mode: normal;
+}
+
+.cursor-dot.is-active {
+  width: 30px;
+  height: 30px;
+  background: var(--cursor-active);
+  box-shadow: 0 0 0 2px var(--cursor-active-ring);
+}
+
+.cursor-dot.is-hidden {
+  opacity: 0;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .cursor-dot { display: none; }
 }
 
 /* Dotted grid ground used behind hero / auth sections */
@@ -85,14 +176,19 @@ a {
 }
 
 .kicker.on-dark {
-  color: var(--lime);
+  color: var(--accent-light);
 }
 
-/* Outlined lime word, as in the reference headings */
+/* Outlined accent word, as in the reference headings */
 .outline-word {
-  color: var(--lime);
+  color: var(--accent);
   -webkit-text-stroke: 2px var(--ink);
   paint-order: stroke fill;
+}
+
+.section-dark .outline-word,
+.on-dark .outline-word {
+  color: var(--accent-light);
 }
 
 /* Giant ghost watermark behind a section */
@@ -142,8 +238,9 @@ a {
   box-shadow: 0 0 0 var(--ink);
 }
 
-.btn-lime {
-  background: var(--lime);
+.btn-accent {
+  background: var(--accent);
+  color: var(--accent-on);
 }
 
 .btn-sm {
@@ -168,21 +265,23 @@ a {
   align-items: center;
   padding: 0 14px 0 0;
   background: var(--dark);
-  border-bottom: 4px solid var(--lime);
+  border-bottom: 4px solid var(--accent);
   z-index: 90;
 }
 
 .nav.is-top {
   background: transparent;
-  border-bottom-color: var(--lime);
+  border-bottom-color: var(--accent);
 }
 
 .nav-logo {
-  background: var(--lime);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--accent-on);
   font-family: var(--display);
   font-size: 0.95rem;
-  line-height: 0.92;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
   text-transform: uppercase;
   padding: 10px 14px;
   border: 3px solid var(--ink);
@@ -209,8 +308,8 @@ a {
 }
 
 .nav-links a:hover {
-  color: var(--lime);
-  border-bottom-color: var(--lime);
+  color: var(--accent-light);
+  border-bottom-color: var(--accent);
 }
 
 .nav.is-top .nav-links a {
@@ -219,7 +318,7 @@ a {
 
 .nav.is-top .nav-links a:hover {
   color: var(--ink);
-  border-bottom-color: var(--lime);
+  border-bottom-color: var(--accent);
 }
 
 .nav-right {
@@ -246,9 +345,9 @@ a {
 }
 
 .nav-login:hover {
-  background: var(--lime);
-  border-color: var(--lime);
-  color: var(--ink);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-on);
 }
 
 .burger {
@@ -279,8 +378,8 @@ a {
   position: relative;
   min-height: 100vh;
   padding: calc(var(--nav-h) + 70px) 6vw 120px;
-  border-left: 5px solid var(--lime);
-  border-right: 5px solid var(--lime);
+  border-left: 5px solid var(--accent);
+  border-right: 5px solid var(--accent);
   overflow: hidden;
 }
 
@@ -289,7 +388,7 @@ a {
   align-items: center;
   gap: 9px;
   background: var(--ink);
-  color: var(--lime);
+  color: var(--accent-light);
   padding: 8px 16px;
   margin-bottom: 22px;
 }
@@ -298,7 +397,7 @@ a {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--lime);
+  background: var(--accent);
   flex-shrink: 0;
 }
 
@@ -353,9 +452,9 @@ a {
   color: var(--paper);
 }
 
-.marquee-lime {
-  background: var(--lime);
-  color: var(--ink);
+.marquee-accent {
+  background: var(--accent);
+  color: var(--accent-on);
 }
 
 .marquee-track {
@@ -381,12 +480,12 @@ a {
 }
 
 .marquee-sep {
-  color: var(--lime);
+  color: var(--accent-light);
   font-size: 0.6rem;
 }
 
-.marquee-lime .marquee-sep {
-  color: var(--ink);
+.marquee-accent .marquee-sep {
+  color: var(--accent-on);
 }
 
 @keyframes marquee-left {
@@ -459,7 +558,7 @@ a {
 }
 
 .intro-copy strong {
-  color: var(--lime);
+  color: var(--accent-light);
 }
 
 .stack {
@@ -474,7 +573,7 @@ a {
   gap: 16px;
   background: var(--dark-2);
   border: 1px solid #2c2c2c;
-  border-left: 5px solid var(--lime);
+  border-left: 5px solid var(--accent);
   padding: 18px 22px;
 }
 
@@ -482,7 +581,7 @@ a {
   font-family: var(--display);
   font-size: 1.15rem;
   line-height: 1;
-  color: var(--lime);
+  color: var(--accent-light);
   min-width: 26px;
   transition: transform 0.25s ease;
 }
@@ -491,7 +590,7 @@ a {
   font-family: var(--label);
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: var(--lime);
+  color: var(--accent-light);
   font-weight: 600;
   font-size: 0.95rem;
 }
@@ -538,8 +637,8 @@ a {
   display: inline-block;
   margin-bottom: 22px;
   padding: 2px 10px;
-  background: var(--lime);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--accent-on);
   line-height: 1.15;
   transition: transform 0.25s ease;
 }
@@ -558,7 +657,8 @@ a {
 }
 
 .feature-cell.on .feature-title {
-  color: var(--lime);
+  /* The active cell inverts to black, so the title takes the light tint. */
+  color: var(--accent-light);
 }
 
 .feature-text {
@@ -583,7 +683,7 @@ a {
   border: 3px solid var(--ink);
   background: var(--paper);
   padding: 30px 24px;
-  box-shadow: 7px 7px 0 var(--lime);
+  box-shadow: 7px 7px 0 var(--accent);
 }
 
 .stat-value {
@@ -659,7 +759,7 @@ a {
 
 .field input:focus,
 .field textarea:focus {
-  border-bottom-color: var(--lime);
+  border-bottom-color: var(--accent-light);
 }
 
 .field textarea {
@@ -668,7 +768,7 @@ a {
 }
 
 .form-note {
-  color: var(--lime);
+  color: var(--accent-light);
   font-size: 0.85rem;
   margin-top: 14px;
 }
@@ -677,7 +777,7 @@ a {
 .footer {
   background: var(--dark);
   color: var(--paper);
-  border-top: 4px solid var(--lime);
+  border-top: 4px solid var(--accent);
   padding: 62px 6vw 30px;
 }
 
@@ -704,7 +804,7 @@ a {
 }
 
 .footer-col a:hover {
-  color: var(--lime);
+  color: var(--accent-light);
 }
 
 .footer-brand {
@@ -712,11 +812,13 @@ a {
 }
 
 .footer-logo {
-  background: var(--lime);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--accent-on);
   font-family: var(--display);
   font-size: 1.5rem;
-  line-height: 0.94;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
   text-transform: uppercase;
   padding: 20px 30px;
   display: inline-block;
@@ -758,7 +860,7 @@ a {
 }
 
 .footer-stats .marquee-sep {
-  color: var(--lime);
+  color: var(--accent-light);
 }
 
 /* Floating pill CTA */
@@ -767,8 +869,8 @@ a {
   left: 50%;
   bottom: 0;
   transform: translateX(-50%);
-  background: var(--lime);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--accent-on);
   font-family: var(--label);
   text-transform: uppercase;
   letter-spacing: 0.14em;
@@ -800,7 +902,7 @@ a {
   align-items: center;
   padding: 70px 20px 120px;
   position: relative;
-  border-top: 5px solid var(--lime);
+  border-top: 5px solid var(--accent);
   overflow: hidden;
 }
 
@@ -851,7 +953,7 @@ a {
   border: 3px solid var(--ink);
   padding: 26px;
   margin-bottom: 26px;
-  box-shadow: 7px 7px 0 var(--lime);
+  box-shadow: 7px 7px 0 var(--accent);
 }
 
 .panel h2 {
@@ -886,7 +988,7 @@ a {
 
 .stages-fill {
   height: 100%;
-  background: var(--lime);
+  background: var(--accent);
   transition: width 0.3s ease;
 }
 
@@ -913,7 +1015,7 @@ a {
 }
 
 .stage-ok { border-color: var(--ink); color: var(--ink); }
-.stage-running { border-color: var(--ink); background: var(--lime); color: var(--ink); }
+.stage-running { border-color: var(--accent-on); background: var(--accent); color: var(--accent-on); }
 .stage-failed { border-color: #cc0000; color: #cc0000; }
 .stage-skipped { border-style: dashed; }
 
@@ -931,7 +1033,7 @@ a {
 }
 
 .md-editor:focus {
-  box-shadow: 0 0 0 3px var(--lime);
+  box-shadow: 0 0 0 3px var(--accent);
 }
 
 textarea,
@@ -1010,7 +1112,7 @@ input[type="text"] {
 .preset:hover { transform: translate(2px, 2px); }
 
 .preset[aria-pressed="true"] {
-  outline: 3px solid var(--lime);
+  outline: 3px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -1168,7 +1270,7 @@ input[type="text"] {
 
 .flow-pill {
   background: var(--ink);
-  color: var(--lime);
+  color: var(--accent-light);
   padding: 6px 14px;
   font-size: 0.82rem;
   font-weight: 600;
@@ -1190,7 +1292,7 @@ th, td {
 
 th {
   background: var(--ink);
-  color: var(--lime);
+  color: var(--accent-light);
   font-family: var(--label);
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -1205,7 +1307,7 @@ th {
 
 .metric-value {
   font-family: var(--display);
-  color: var(--lime);
+  color: var(--accent);
   font-size: 2.8rem;
   line-height: 1;
 }
@@ -1258,7 +1360,7 @@ th {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  background: var(--lime);
+  background: var(--accent);
   border: 3px solid var(--ink);
   box-shadow: 6px 6px 0 var(--ink);
   padding: 16px 26px;
@@ -1268,6 +1370,7 @@ th {
   font-weight: 600;
   font-size: 0.82rem;
   cursor: pointer;
+  color: var(--accent-on);
 }
 
 .tabs {
@@ -1292,7 +1395,9 @@ th {
 }
 
 .tab:last-child { border-right: 0; }
-.tab[aria-selected="true"] { background: var(--lime); }
+.tab[aria-selected="true"] { background: var(--accent);
+  color: var(--accent-on);
+}
 
 /* ── Responsive ──────────────────────────────────────────────────────────── */
 @media (max-width: 1000px) {
@@ -1359,7 +1464,7 @@ th {
 .file-btn:focus-visible,
 .tab:focus-visible,
 .preset:focus-visible {
-  outline: 3px solid var(--lime);
+  outline: 3px solid var(--accent);
   outline-offset: 3px;
 }
 
@@ -1367,7 +1472,7 @@ th {
 .stat:hover,
 .deck-card:hover {
   transform: translate(-3px, -3px);
-  box-shadow: 10px 10px 0 var(--lime);
+  box-shadow: 10px 10px 0 var(--accent);
 }
 
 .deck-card:hover {
@@ -1385,7 +1490,7 @@ th {
   position: absolute;
   inset: auto 0 0 0;
   height: 5px;
-  background: var(--lime);
+  background: var(--accent);
   transform: scaleX(0);
   transform-origin: left;
   transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -1442,7 +1547,8 @@ th {
 }
 
 .tab[aria-selected="true"]:hover {
-  background: var(--lime);
+  background: var(--accent);
+  color: var(--accent-on);
 }
 
 /* Marquee slows rather than stopping dead, so the motion reads as deliberate */
@@ -1466,7 +1572,7 @@ th {
   bottom: -3px;
   width: 100%;
   height: 2px;
-  background: var(--lime);
+  background: var(--accent);
   transform: scaleX(0);
   transform-origin: right;
   transition: transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -1489,7 +1595,7 @@ th {
 
 .slide:hover {
   transform: translate(-2px, -2px);
-  box-shadow: 6px 6px 0 var(--lime);
+  box-shadow: 6px 6px 0 var(--accent);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1559,12 +1665,13 @@ th {
 
 .density-option:hover {
   transform: translate(-2px, -2px);
-  box-shadow: 8px 8px 0 var(--lime);
+  box-shadow: 8px 8px 0 var(--accent);
 }
 
 .density-option[aria-pressed="true"] {
-  background: var(--lime);
+  background: var(--accent);
   box-shadow: 5px 5px 0 var(--ink);
+  color: var(--accent-on);
 }
 
 .density-option:focus-visible {

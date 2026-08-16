@@ -8,26 +8,27 @@ import os
 import re
 import time
 from dotenv import load_dotenv
-from learnova.providers import GroqProvider
+from learnova.providers.base import LLMProvider
+from learnova.providers.router import TASK_DIAGRAM, get_router
 from learnova.logging_config import logger
 from typing import Optional
 
 load_dotenv()
 
 # Module-level singleton – reuse one httpx connection pool for all diagram calls.
-_groq_provider: Optional[GroqProvider] = None
+_llm_provider: Optional[LLMProvider] = None
 
 
-def _get_groq_provider(timeout: float = 10.0) -> Optional[GroqProvider]:
-    """Return a cached GroqProvider, or None if GROQ_API_KEY is missing."""
-    global _groq_provider
-    if _groq_provider is None:
-        try:
-            _groq_provider = GroqProvider(timeout=timeout)
-        except Exception as e:
-            logger.warning("Could not initialise GroqProvider for diagrams: %s", e)
+def _get_llm_provider() -> Optional[LLMProvider]:
+    """Return the cached router, or None when no API key is configured."""
+    global _llm_provider
+    if _llm_provider is None:
+        router = get_router()
+        if not router.available:
+            logger.warning("No LLM provider configured — using fallback diagrams.")
             return None
-    return _groq_provider
+        _llm_provider = router
+    return _llm_provider
 
 SYSTEM_PROMPT = (
     "You are an expert educational visual designer. "
@@ -44,19 +45,19 @@ def generate_mermaid_diagram(text: str, title: str = "") -> dict:
     Generate Mermaid.js code for process/workflow text.
     """
     try:
-        provider = _get_groq_provider(timeout=10.0)
+        provider = _get_llm_provider()
         if provider is None:
-            raise ValueError("GroqProvider not available")
+            raise ValueError("No LLM provider available")
         raw_content = provider.generate(
             prompt=f"Title: {title}\nContent:\n{text}",
             system_prompt=SYSTEM_PROMPT,
-            model="llama-3.1-8b-instant",
+            task=TASK_DIAGRAM,       # router picks the model per provider
             temperature=0.3,
             max_tokens=600,
-            timeout=10.0,
+            timeout=15.0,
         )
         if not raw_content or not raw_content.strip():
-            raise ValueError("Empty Groq response for diagram")
+            raise ValueError("Empty LLM response for diagram")
         match = re.search(r"\{[\s\S]*\}", raw_content)
         if not match:
             raise ValueError("No JSON object found in diagram response")
